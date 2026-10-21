@@ -1,13 +1,14 @@
 """Meme maker: blank-template browser (imgflip + your own folder) and a text editor."""
 import json
 import time
+from pathlib import Path
 
-from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import (QColor, QFont, QFontMetricsF, QImage, QPainter, QPainterPath,
+from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, QUrl, pyqtSignal
+from PyQt6.QtGui import (QColor, QDesktopServices, QFont, QFontMetricsF, QImage, QPainter, QPainterPath,
                          QPen, QPixmap)
 from PyQt6.QtWidgets import (QCheckBox, QColorDialog, QFileDialog, QFormLayout,
                              QGraphicsItem, QGraphicsObject, QGraphicsScene, QGraphicsView,
-                             QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+                             QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu, QPlainTextEdit,
                              QPushButton, QScrollArea, QSlider, QVBoxLayout, QWidget)
 
 from .config import CACHE_DIR, TEMPLATES_DIR
@@ -22,6 +23,7 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 # ---------------------------------------------------------------- browser
 class TemplateTile(QWidget):
     clicked = pyqtSignal(object)
+    menu = pyqtSignal(object, object)  # tpl, global pos
 
     def __init__(self, tpl, net):
         super().__init__()
@@ -64,14 +66,18 @@ class TemplateTile(QWidget):
     def mouseReleaseEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.tpl)
+        elif e.button() == Qt.MouseButton.RightButton:
+            self.menu.emit(self.tpl, e.globalPosition().toPoint())
 
 
 class TemplatePage(QWidget):
     open_image = pyqtSignal(object, int)  # QImage, suggested box count
+    copy_saved = pyqtSignal(str)          # path of a meme you made earlier
 
-    def __init__(self, net):
+    def __init__(self, net, cfg):
         super().__init__()
         self.net = net
+        self.cfg = cfg
         self.templates = []
         self.tiles = []
         self.filter = QLineEdit(placeholderText="Filter templates")
@@ -80,8 +86,12 @@ class TemplatePage(QWidget):
         own = QPushButton("Open image…")
         own.setToolTip(f"Use any image. Files in {TEMPLATES_DIR} show up here too.")
         own.clicked.connect(self._open_file)
+        self.mine = QPushButton("My memes", checkable=True)
+        self.mine.setToolTip("Memes you made. Click to copy, right-click for more.")
+        self.mine.toggled.connect(self._toggle_mine)
         top = QHBoxLayout()
         top.addWidget(self.filter, 1)
+        top.addWidget(self.mine)
         top.addWidget(own)
 
         host = QWidget()
@@ -93,7 +103,7 @@ class TemplatePage(QWidget):
         self.scroll.setWidget(host)
         self.scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.status = QLabel(objectName="status")
-        attrib = QLabel("Templates from imgflip", objectName="attrib")
+        attrib = self.attrib = QLabel("Templates from imgflip", objectName="attrib")
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         bottom.addWidget(attrib)
@@ -139,22 +149,60 @@ class TemplatePage(QWidget):
         self.status.setText("")
         self._populate()
 
+    def saved_memes(self):
+        try:
+            files = [p for p in self.cfg.memes_dir.iterdir() if p.suffix.lower() in IMAGE_EXT]
+        except OSError:
+            return []
+        files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        return [{"name": p.stem, "path": str(p), "saved": True, "box_count": 2} for p in files]
+
+    def _toggle_mine(self, on):
+        self.filter.setPlaceholderText("Filter my memes" if on else "Filter templates")
+        self.attrib.setText(str(self.cfg.memes_dir) if on else "Templates from imgflip")
+        self._populate()
+
+    def refresh_saved(self):
+        if self.mine.isChecked():
+            self._populate()
+
     def _populate(self):
         for t in self.tiles:
             t.abort()
             t.deleteLater()
         self.tiles = []
         f = self.filter.text().strip().lower()
-        for tpl in self.templates:
+        items = self.saved_memes() if self.mine.isChecked() else self.templates
+        if self.mine.isChecked():
+            self.status.setText("" if items else "Nothing yet. Memes you copy or save land here."
+                                if self.cfg["save_memes"] else "Saving memes is off (⚙ Settings).")
+        for tpl in items:
             if f and f not in tpl["name"].lower():
                 continue
             t = TemplateTile(tpl, self.net)
             t.clicked.connect(self._pick)
+            t.menu.connect(self._menu)
             n = len(self.tiles)
             self.grid.addWidget(t, n // COLUMNS, n % COLUMNS)
             self.tiles.append(t)
 
+    def _menu(self, tpl, pos):
+        if not tpl.get("saved"):
+            return
+        path = tpl["path"]
+        m = QMenu(self)
+        m.addAction("Copy", lambda: self.copy_saved.emit(path))
+        m.addAction("Add more captions", lambda: self.open_image.emit(QImage(path), 1))
+        m.addAction("Open folder", lambda: QDesktopServices.openUrl(
+            QUrl.fromLocalFile(str(Path(path).parent))))
+        m.addSeparator()
+        m.addAction("Delete", lambda: (Path(path).unlink(missing_ok=True), self._populate()))
+        m.exec(pos)
+
     def _pick(self, tpl):
+        if tpl.get("saved"):
+            self.copy_saved.emit(tpl["path"])
+            return
         boxes = tpl.get("box_count", 2)
         if tpl.get("path"):
             self.open_image.emit(QImage(tpl["path"]), boxes)

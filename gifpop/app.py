@@ -4,12 +4,14 @@ The app stays resident: on Wayland the clipboard is served by the app that set i
 so quitting after a copy would make the paste fail. Running `gifpop` again just
 asks the resident instance to show itself (and forwards the XDG activation token
 from the global shortcut so KWin gives the window focus)."""
+import hashlib
 import os
 import re
 import shlex
 import sys
+import time
 
-from PyQt6.QtCore import QByteArray, QMimeData, QProcess, Qt, QTimer, QUrl
+from PyQt6.QtCore import QBuffer, QByteArray, QMimeData, QProcess, Qt, QTimer, QUrl
 from PyQt6.QtGui import (QFont, QFontDatabase, QGuiApplication, QIcon,
                          QImage, QKeySequence, QShortcut)
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
@@ -18,7 +20,7 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, Q
                              QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget,
                              QSystemTrayIcon, QVBoxLayout, QWidget)
 
-from .config import ASSETS, OUT_DIR, Config, Recents
+from .config import ASSETS, DEFAULT_MEMES_DIR, OUT_DIR, Config, Recents
 from . import __version__
 from .gifs import GifPage
 from .keys import BUILTIN_KLIPY
@@ -83,6 +85,9 @@ class SettingsDialog(QDialog):
         self.auto_hide = QCheckBox("Hide after copying / when focus leaves")
         self.auto_hide.setChecked(cfg["auto_hide"])
         self.emoji = QLineEdit(cfg["emoji_command"])
+        self.save_memes = QCheckBox("Keep a copy of memes I make (My memes)")
+        self.save_memes.setChecked(cfg["save_memes"])
+        self.memes_dir = QLineEdit(cfg["memes_dir"], placeholderText=str(DEFAULT_MEMES_DIR))
 
         links = QLabel('Free keys: <a href="https://partner.klipy.com">partner.klipy.com</a> · '
                        '<a href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>')
@@ -100,6 +105,8 @@ class SettingsDialog(QDialog):
         form.addRow("Copy as", self.mode)
         form.addRow(self.auto_hide)
         form.addRow("Emoji button runs", self.emoji)
+        form.addRow(self.save_memes)
+        form.addRow("My memes folder", self.memes_dir)
         form.addRow(about)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                               | QDialogButtonBox.StandardButton.Cancel)
@@ -118,6 +125,8 @@ class SettingsDialog(QDialog):
         c["copy_mode"] = self.mode.currentData()
         c["auto_hide"] = self.auto_hide.isChecked()
         c["emoji_command"] = self.emoji.text().strip()
+        c["save_memes"] = self.save_memes.isChecked()
+        c["memes_dir"] = self.memes_dir.text().strip()
         c.save()
         super().accept()
 
@@ -137,7 +146,9 @@ class MainWindow(QWidget):
         meme_font = fams[0] if fams else QFont("DejaVu Sans").family()
 
         self.gifs = GifPage(cfg, self.net, self.recents)
-        self.templates = TemplatePage(self.net)
+        self.templates = TemplatePage(self.net, cfg)
+        self.meme_from_gif = False   # captions on a GIF frame aren't kept (KLIPY terms)
+        self.last_kept = None
         self.editor = MemeEditor(meme_font)
         self.stack = QStackedWidget()
         for w in (self.gifs, self.templates, self.editor):
@@ -145,9 +156,9 @@ class MainWindow(QWidget):
 
         self.gifs.picked.connect(self.copy_gif)
         self.gifs.copy_link.connect(self.copy_link)
-        self.gifs.save_as.connect(self.save_gif)
         self.gifs.caption.connect(self.caption_gif)
         self.templates.open_image.connect(self.open_editor)
+        self.templates.copy_saved.connect(lambda p: self.copy_meme(QImage(p), keep=False))
         self.editor.back.connect(lambda: self.show_page("meme"))
         self.editor.copy_image.connect(self.copy_meme)
         self.editor.save_image.connect(self.save_meme)
@@ -292,31 +303,47 @@ class MainWindow(QWidget):
         self.gifs.report_share(gif)
         self.flash("Link copied — press Ctrl+V to paste", hide=True)
 
-    def save_gif(self, gif):
-        name = f"{safe_name(gif.title, 'gif')}.gif"
-        path, _ = QFileDialog.getSaveFileName(self, "Save GIF", os.path.expanduser(f"~/{name}"),
-                                              "GIF (*.gif)")
-        if path:
-            self.net.get(gif.full, lambda d: (open(path, "wb").write(d),
-                                              self.flash(f"Saved {os.path.basename(path)}")),
-                         lambda m: self.flash(f"Download failed: {m}"), store=False)
-
     def caption_gif(self, gif):
         self.flash("Opening first frame in the meme maker…")
-        self.net.get(gif.full, lambda d: self.open_editor(QImage.fromData(d), 2),
+        self.net.get(gif.full, lambda d: self.open_editor(QImage.fromData(d), 2, from_gif=True),
                      lambda m: self.flash(f"Download failed: {m}"), store=False)
 
-    def open_editor(self, image, boxes):
+    def open_editor(self, image, boxes, from_gif=False):
         if image.isNull():
             self.flash("Couldn't open that image.")
             return
+        self.meme_from_gif = from_gif
         self.tab_meme.setChecked(True)
         self.stack.setCurrentWidget(self.editor)
         self.resize(*MEME_SIZE)
         self.editor.load(image, boxes)
         self.toast.clear()
 
-    def copy_meme(self, image):
+    def keep_meme(self, image):
+        """Copy into the My memes folder (once per distinct image). Returns the path or None."""
+        if not self.cfg["save_memes"] or self.meme_from_gif:
+            return None
+        data = QByteArray()
+        buf = QBuffer(data)
+        buf.open(QBuffer.OpenModeFlag.WriteOnly)
+        image.save(buf, "PNG")
+        digest = hashlib.sha1(bytes(data)).hexdigest()
+        if digest == self.last_kept:
+            return None
+        folder = self.cfg.memes_dir
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"meme-{time.strftime('%Y%m%d-%H%M%S')}.png"
+            path.write_bytes(bytes(data))
+        except OSError as e:
+            self.flash(f"Couldn't keep a copy: {e.strerror}")
+            return None
+        self.last_kept = digest
+        self.templates.refresh_saved()
+        return path
+
+    def copy_meme(self, image, keep=True):
+        kept = self.keep_meme(image) if keep else None
         path = OUT_DIR / "meme.png"
         n = 1
         while path.exists():  # keep earlier copies valid for apps that paste lazily
@@ -327,13 +354,15 @@ class MainWindow(QWidget):
         mime.setImageData(image)
         mime.setUrls([QUrl.fromLocalFile(str(path))])
         self._set_clipboard(mime)
-        self.flash("Meme copied — press Ctrl+V to paste", hide=True)
+        self.flash("Meme copied — press Ctrl+V to paste"
+                   + (" (kept in My memes)" if kept else ""), hide=True)
 
     def save_meme(self, image):
         path, _ = QFileDialog.getSaveFileName(self, "Save meme", os.path.expanduser("~/meme.png"),
                                               "PNG (*.png);;JPEG (*.jpg)")
         if path:
             image.save(path)
+            self.keep_meme(image)
             self.flash(f"Saved {os.path.basename(path)}")
 
     # ---- misc ----------------------------------------------------------

@@ -57,7 +57,6 @@ class GifTile(QLabel):
 class GifPage(QWidget):
     picked = pyqtSignal(object)        # Gif -> copy as file
     copy_link = pyqtSignal(object)
-    save_as = pyqtSignal(object)
     caption = pyqtSignal(object)       # Gif -> open in meme editor (first frame)
     need_key = pyqtSignal()
 
@@ -247,6 +246,5 @@ class GifPage(QWidget):
         m = QMenu(self)
         m.addAction("Copy GIF", lambda: self.picked.emit(gif))
         m.addAction("Copy link", lambda: self.copy_link.emit(gif))
-        m.addAction("Save as…", lambda: self.save_as.emit(gif))
         m.addAction("Caption in meme maker", lambda: self.caption.emit(gif))
         m.exec(pos)

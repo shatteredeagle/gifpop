@@ -21,6 +21,21 @@ HTTP_CACHE = CACHE_DIR / "http"
 TEMPLATES_DIR = DATA_DIR / "templates"  # drop your own blank templates here
 ASSETS = Path(__file__).parent / "assets"
 
+
+def _pictures():
+    # XDG_PICTURES_DIR from user-dirs.dirs, else ~/Pictures
+    try:
+        for line in (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+                     / "user-dirs.dirs").read_text().splitlines():
+            if line.startswith("XDG_PICTURES_DIR="):
+                return Path(os.path.expandvars(line.split("=", 1)[1].strip().strip('"')))
+    except OSError:
+        pass
+    return Path.home() / "Pictures"
+
+
+DEFAULT_MEMES_DIR = _pictures() / "GifPop"
+
 DEFAULTS = {
     "provider": "klipy",          # klipy | giphy
     "klipy_key": "",
@@ -31,6 +46,8 @@ DEFAULTS = {
     "auto_hide": True,
     "emoji_command": "plasma-emojier",
     "customer_id": "",
+    "save_memes": True,           # keep a copy of every meme you make
+    "memes_dir": "",              # empty = ~/Pictures/GifPop
 }
 
 
@@ -56,6 +73,10 @@ class Config(dict):
     def klipy(self):
         """The key typed into Settings, else the one baked into release builds."""
         return self["klipy_key"] or BUILTIN_KLIPY
+
+    @property
+    def memes_dir(self):
+        return Path(os.path.expanduser(self["memes_dir"])) if self["memes_dir"] else DEFAULT_MEMES_DIR
 
     @property
     def api_key(self):
