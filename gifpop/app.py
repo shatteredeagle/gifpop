@@ -22,7 +22,7 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, Q
                              QPushButton, QStackedWidget, QSystemTrayIcon, QToolButton,
                              QVBoxLayout, QWidget)
 
-from .config import ASSETS, DEFAULT_MEMES_DIR, OUT_DIR, Config, Recents
+from .config import ASSETS, DEFAULT_MEMES_DIR, OUT_DIR, TILING_WM, Config, Recents
 from . import __version__, theme
 from .gifs import GifPage
 from .keys import BUILTIN_KLIPY
@@ -184,7 +184,7 @@ class MainWindow(QWidget):
         self.frosted = False
         self.frost_timer = QTimer(self, singleShot=True, interval=300)
         self.frost_timer.timeout.connect(self._frost_check)
-        self.resize(*GIF_SIZE)
+        self.setFixedSize(*GIF_SIZE)
 
         fid = QFontDatabase.addApplicationFont(str(ASSETS / "Anton-Regular.ttf"))
         fams = QFontDatabase.applicationFontFamilies(fid) if fid >= 0 else []
@@ -281,14 +281,14 @@ class MainWindow(QWidget):
         if page == "gif":
             self.stack.setCurrentWidget(self.gifs)
             self.tab_gif.setChecked(True)
-            self.resize(*GIF_SIZE)
+            self.setFixedSize(*GIF_SIZE)
             if not self.gifs.tiles and not self.gifs.loading:
                 self.gifs.refresh()
             self.gifs.focus_search()
         elif page == "meme":
             self.stack.setCurrentWidget(self.templates)
             self.tab_meme.setChecked(True)
-            self.resize(*GIF_SIZE)
+            self.setFixedSize(*GIF_SIZE)
             self.templates.ensure_loaded()
             self.templates.filter.setFocus()
         self.toast.hide()
@@ -320,7 +320,9 @@ class MainWindow(QWidget):
 
     def _blur_check(self):
         # Hide when the user clicks elsewhere, like Win+. does — but not while one of
-        # our own dialogs has focus, and not mid-meme.
+        # our own dialogs has focus, not mid-meme, and not on tiling WMs (see TILING_WM).
+        if TILING_WM:
+            return
         if (self.cfg["auto_hide"] and self.isVisible() and QApplication.activeWindow() is None
                 and self.stack.currentWidget() is not self.editor):
             self.hide()
@@ -435,7 +437,7 @@ class MainWindow(QWidget):
         self.meme_from_gif = from_gif
         self.tab_meme.setChecked(True)
         self.stack.setCurrentWidget(self.editor)
-        self.resize(*MEME_SIZE)
+        self.setFixedSize(*MEME_SIZE)
         self.editor.load(image, boxes)
         self.toast.clear()
 

@@ -20,6 +20,12 @@ OUT_DIR = CACHE_DIR / "out"             # files handed to the clipboard
 HTTP_CACHE = CACHE_DIR / "http"
 TEMPLATES_DIR = DATA_DIR / "templates"  # drop your own blank templates here
 ASSETS = Path(__file__).parent / "assets"
+# Tiling WMs move focus with the mouse, so "hide when focus leaves" would close the popup
+# while you reach for it. There we only hide after copying or on Esc.
+TILING_WM = next((name for var, name in (("HYPRLAND_INSTANCE_SIGNATURE", "hyprland"),
+                                         ("SWAYSOCK", "sway"), ("NIRI_SOCKET", "niri"),
+                                         ("I3SOCK", "i3"))
+                  if os.environ.get(var)), "")
 
 
 def _pictures():

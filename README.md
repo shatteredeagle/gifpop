@@ -36,6 +36,29 @@ To remove it: `~/.local/lib/gifpop/uninstall.sh`. Add `--purge` to also delete s
 
 GifPop stays in the system tray after you close the window. On Wayland the app that copied something has to keep running for the paste to work, and it also makes the hotkey open instantly.
 
+## Tiling window managers
+
+GifPop floats on its own on Sway and i3 (its window has a fixed size), and it doesn't hide just because focus moved while you reach for it. Bind the hotkey and, where needed, make it float:
+
+```ini
+# Hyprland (hyprland.conf)
+bind = SUPER, period, exec, gifpop
+windowrulev2 = float, class:^(gifpop)$
+windowrulev2 = center, class:^(gifpop)$
+
+# Sway (~/.config/sway/config)
+bindsym $mod+period exec gifpop
+
+# i3 (~/.config/i3/config)
+bindsym $mod+period exec gifpop
+
+# niri (config.kdl): inside binds { }, and a window rule
+Mod+Period { spawn "gifpop"; }
+window-rule { match app-id="^gifpop$"; open-floating true; }
+```
+
+Start it once at login with `gifpop --background` (for example `exec gifpop --background` / `exec-once = gifpop --background`) so the hotkey opens it instantly. No system tray is needed; `gifpop --quit` stops it. Hyprland blurs GifPop's translucent window by itself.
+
 ## GIF search
 
 Search is powered by [KLIPY](https://klipy.com). Release downloads include an API key, so it works straight away. If searches ever start failing because the shared key is busy, get a free key of your own at <https://partner.klipy.com> and add it in Settings. GIPHY works too with your own GIPHY key.
