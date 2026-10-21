@@ -6,6 +6,7 @@ All notable changes to GifPop. Each release's notes on GitHub come from its sect
 
 ### Fixed
 - **Win + . didn't open GifPop right after installing on KDE Plasma.** The installer saved the shortcut, but Plasma only started listening for it after you logged out and back in. It now works straight away.
+- `gifpop --quit` (and opening GifPop from the hotkey) could occasionally be ignored by the running copy. Fixed.
 
 ### After upgrading
 - If Win + . did nothing for you on 0.1.0, run the install line again and answer yes to the Win + . question (or just log out and back in):
