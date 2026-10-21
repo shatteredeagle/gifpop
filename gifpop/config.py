@@ -4,6 +4,8 @@ import os
 import uuid
 from pathlib import Path
 
+from .keys import BUILTIN_KLIPY
+
 APP = "gifpop"
 
 
@@ -18,6 +20,27 @@ OUT_DIR = CACHE_DIR / "out"             # files handed to the clipboard
 HTTP_CACHE = CACHE_DIR / "http"
 TEMPLATES_DIR = DATA_DIR / "templates"  # drop your own blank templates here
 ASSETS = Path(__file__).parent / "assets"
+# Tiling WMs move focus with the mouse, so "hide when focus leaves" would close the popup
+# while you reach for it. There we only hide after copying or on Esc.
+TILING_WM = next((name for var, name in (("HYPRLAND_INSTANCE_SIGNATURE", "hyprland"),
+                                         ("SWAYSOCK", "sway"), ("NIRI_SOCKET", "niri"),
+                                         ("I3SOCK", "i3"))
+                  if os.environ.get(var)), "")
+
+
+def _pictures():
+    # XDG_PICTURES_DIR from user-dirs.dirs, else ~/Pictures
+    try:
+        for line in (Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+                     / "user-dirs.dirs").read_text().splitlines():
+            if line.startswith("XDG_PICTURES_DIR="):
+                return Path(os.path.expandvars(line.split("=", 1)[1].strip().strip('"')))
+    except OSError:
+        pass
+    return Path.home() / "Pictures"
+
+
+DEFAULT_MEMES_DIR = _pictures() / "GifPop"
 
 DEFAULTS = {
     "provider": "klipy",          # klipy | giphy
@@ -27,8 +50,10 @@ DEFAULTS = {
     "copy_quality": "md",         # size bucket used for the copied file: hd/md/sm
     "copy_mode": "file",          # file = paste as a GIF attachment, link = paste the URL
     "auto_hide": True,
-    "emoji_command": "flatpak run dev.krtirtho.Flemozi",
+    "emoji_command": "plasma-emojier",
     "customer_id": "",
+    "save_memes": True,           # keep a copy of every meme you make
+    "memes_dir": "",              # empty = ~/Pictures/GifPop
 }
 
 
@@ -51,8 +76,17 @@ class Config(dict):
         self.path.write_text(json.dumps(self, indent=2))
 
     @property
+    def klipy(self):
+        """The key typed into Settings, else the one baked into release builds."""
+        return self["klipy_key"] or BUILTIN_KLIPY
+
+    @property
+    def memes_dir(self):
+        return Path(os.path.expanduser(self["memes_dir"])) if self["memes_dir"] else DEFAULT_MEMES_DIR
+
+    @property
     def api_key(self):
-        return self["klipy_key"] if self["provider"] == "klipy" else self["giphy_key"]
+        return self.klipy if self["provider"] == "klipy" else self["giphy_key"]
 
 
 class Recents:

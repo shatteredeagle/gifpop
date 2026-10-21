@@ -11,17 +11,26 @@ class Gif:
     preview: str   # small animated gif for the grid
     full: str      # gif that gets copied
     url: str       # shareable page/media link for "copy link"
+    w: int = 0     # preview size, 0 if unknown (old recents)
+    h: int = 0
 
     def to_dict(self):
         return asdict(self)
 
 
+def _int(v):
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _pick(file, sizes, fmt="gif"):
     for s in sizes:
-        u = (file.get(s) or {}).get(fmt, {}).get("url")
-        if u:
-            return u
-    return ""
+        m = (file.get(s) or {}).get(fmt) or {}
+        if m.get("url"):
+            return m["url"], _int(m.get("width")), _int(m.get("height"))
+    return "", 0, 0
 
 
 class Klipy:
@@ -36,11 +45,19 @@ class Klipy:
         params = {"page": page, "per_page": per_page,
                   "customer_id": self.cfg["customer_id"],
                   "content_filter": self.cfg["content_filter"]}
-        key = quote(self.cfg["klipy_key"], safe="")
+        key = quote(self.cfg.klipy, safe="")
         if query:
             params["q"] = query
             return f"{self.base}/{key}/gifs/search?{urlencode(params)}"
         return f"{self.base}/{key}/gifs/trending?{urlencode(params)}"
+
+    def share(self, gif, query):
+        """KLIPY asks apps to report which GIF was sent (improves its ranking)."""
+        body = {"customer_id": self.cfg["customer_id"]}
+        if query:
+            body["q"] = query
+        key = quote(self.cfg.klipy, safe="")
+        return f"{self.base}/{key}/gifs/share/{quote(gif.id, safe='')}", body
 
     def parse(self, raw):
         j = json.loads(raw)
@@ -52,11 +69,11 @@ class Klipy:
             f = it.get("file")
             if it.get("type", "gif") != "gif" or not f:
                 continue  # skips ad slots
-            full = _pick(f, order)
-            out.append(Gif(id=str(it.get("id") or it.get("slug")),
+            full = _pick(f, order)[0]
+            prev, w, h = _pick(f, ["sm", "xs", "md"])
+            out.append(Gif(id=str(it.get("slug") or it.get("id")),  # slug: the share ping wants it
                            title=it.get("title") or "",
-                           preview=_pick(f, ["sm", "xs", "md"]) or full,
-                           full=full, url=full))
+                           preview=prev or full, full=full, url=full, w=w, h=h))
         return out, bool(data.get("has_next"))
 
 
@@ -69,6 +86,9 @@ class Giphy:
     def __init__(self, cfg):
         self.cfg = cfg
         self.per_page = 30
+
+    def share(self, gif, query):
+        return None
 
     def url(self, query, page, per_page=30):
         self.per_page = per_page
@@ -88,9 +108,10 @@ class Giphy:
         for it in j.get("data", []):
             im = it.get("images", {})
             full = (im.get(full_key) or im.get("original") or {}).get("url", "")
-            prev = (im.get("fixed_width") or {}).get("url", full)
-            out.append(Gif(id=it["id"], title=it.get("title", ""), preview=prev,
-                           full=full, url=it.get("url") or full))
+            fw = im.get("fixed_width") or {}
+            out.append(Gif(id=it["id"], title=it.get("title", ""), preview=fw.get("url", full),
+                           full=full, url=it.get("url") or full,
+                           w=_int(fw.get("width")), h=_int(fw.get("height"))))
         p = j.get("pagination", {})
         has_next = p.get("offset", 0) + p.get("count", 0) < p.get("total_count", 0)
         return out, has_next

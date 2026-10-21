@@ -1,5 +1,8 @@
-"""Async HTTP on Qt's event loop, with a disk cache for thumbnails and media."""
-from PyQt6.QtCore import QObject, QUrl
+"""Async HTTP on Qt's event loop, with a disk cache for thumbnails and API pages.
+Full-size GIFs are never written to the cache (KLIPY's terms allow storing thumbnails only)."""
+import json
+
+from PyQt6.QtCore import QByteArray, QObject, QUrl
 from PyQt6.QtNetwork import (QNetworkAccessManager, QNetworkDiskCache,
                              QNetworkReply, QNetworkRequest)
 
@@ -17,13 +20,15 @@ class Net(QObject):
         cache.setMaximumCacheSize(400 * 1024 * 1024)
         self.nam.setCache(cache)
 
-    def get(self, url, on_ok, on_err=None, prefer_cache=True):
+    def get(self, url, on_ok, on_err=None, prefer_cache=True, store=True):
         """Fetch url; on_ok(bytes) or on_err(str). Returns the reply so callers can abort()."""
         req = QNetworkRequest(QUrl(url))
         req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, USER_AGENT)
         if prefer_cache:
             req.setAttribute(QNetworkRequest.Attribute.CacheLoadControlAttribute,
                              QNetworkRequest.CacheLoadControl.PreferCache)
+        if not store:
+            req.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
         reply = self.nam.get(req)
 
         def done():
@@ -40,3 +45,11 @@ class Net(QObject):
 
         reply.finished.connect(done)
         return reply
+
+    def post_json(self, url, body):
+        """Fire and forget (KLIPY's share ping)."""
+        req = QNetworkRequest(QUrl(url))
+        req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, USER_AGENT)
+        req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, "application/json")
+        reply = self.nam.post(req, QByteArray(json.dumps(body).encode()))
+        reply.finished.connect(reply.deleteLater)
