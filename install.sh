@@ -125,6 +125,9 @@ if command -v gdbus >/dev/null && kga allMainComponents >/dev/null 2>&1; then
     kga setForeignShortcut "$emojier_id" "[$emojier_alt]" >/dev/null 2>&1 || true
     kga doRegister "$gifpop_id" >/dev/null 2>&1 || true
     kga setForeignShortcut "$gifpop_id" "[$meta_period]" >/dev/null 2>&1 || true
+    # setForeignShortcut only stores the key: until the next login KDE ignores real key
+    # presses for it. setShortcut with SetPresent (2) makes it live right away.
+    kga setShortcut "$gifpop_id" "[$meta_period]" 2 >/dev/null 2>&1 || true
     if kga shortcutKeys "$gifpop_id" 2>/dev/null | grep -q "$meta_period"; then
       echo "Win+. now opens GifPop. (Emoji picker: Meta+Ctrl+Alt+Shift+Space, or the 😀 button.)"
     else
