@@ -82,9 +82,11 @@ a.binaries = [e for e in binaries
 # (ubuntu-22.04). Bundling the old copies does harm: an old libstdc++ stops newer Mesa GL
 # drivers from loading, an old fontconfig chokes on newer fonts.conf, and glib/dbus/systemd
 # get loaded alongside the system's copies by other system libraries. Use the system's.
+# libwayland-client too: every Wayland session has it, and the compositor's newer copy is
+# what the bundled Qt wayland plugin and the blur helper should talk through.
 system_libs = re.compile(
     r"lib(stdc\+\+|gcc_s|fontconfig|freetype|glib-2\.0|gobject-2\.0|gio-2\.0|gmodule-2\.0"
-    r"|gthread-2\.0|dbus-1|systemd)\.so"
+    r"|gthread-2\.0|dbus-1|systemd|wayland-client)\.so"
 )
 a.binaries = [e for e in a.binaries
               if "/" in dest(e) or not system_libs.match(os.path.basename(dest(e)))]
@@ -92,6 +94,14 @@ a.binaries = [e for e in a.binaries
 kept = {os.path.basename(dest(e)) for e in a.binaries if e[2] != "SYMLINK"}
 a.binaries = [e for e in a.binaries if e[2] != "SYMLINK" or os.path.basename(dest(e)) in kept]
 a.datas = [e for e in a.datas if e[2] != "SYMLINK" or os.path.basename(dest(e)) in kept]
+
+# Native blur helper (scripts/build.sh builds it into the staged source when QT_PREFIX is
+# set). Added after Analysis, as plain data, on purpose: passed to Analysis it's reclassified
+# as a binary and PyInstaller chases its Qt6Gui/Core deps, which could collect a second Qt
+# (the build host's). At run time those resolve to the bundled Qt already in the process.
+blur_helper = os.path.join(src, "gifpop", "libgifpopblur.so")
+if os.path.exists(blur_helper):
+    a.datas.append(("gifpop/libgifpopblur.so", blur_helper, "DATA"))
 
 pyz = PYZ(a.pure)
 

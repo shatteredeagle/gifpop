@@ -25,6 +25,24 @@ jobs:
             libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
       - name: Build toolchain (pinned)
         run: pip install -r packaging/requirements-build.txt
+      - name: Blur helper toolchain
+        run: sudo apt-get install -y --no-install-recommends g++ libwayland-dev libwayland-bin pkg-config
+      - name: Restore Qt 6.11.2 (headers for the blur helper; matches PyQt6-Qt6)
+        id: qt-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/qt
+          key: qt-6.11.2-linux_gcc_64-aqtinstall-3.3.0
+      - name: Install Qt 6.11.2 (aqtinstall, pinned)
+        if: steps.qt-cache.outputs.cache-hit != 'true'
+        run: |
+          python -m venv "$RUNNER_TEMP/aqt"
+          "$RUNNER_TEMP/aqt/bin/pip" install aqtinstall==3.3.0
+          "$RUNNER_TEMP/aqt/bin/aqt" install-qt linux desktop 6.11.2 linux_gcc_64 -O "$RUNNER_TEMP/qt"
+      - name: Point the build at it (build.sh then requires the blur helper)
+        run: |
+          test -d "$RUNNER_TEMP/qt/6.11.2/gcc_64/include/QtGui"
+          echo "QT_PREFIX=$RUNNER_TEMP/qt/6.11.2/gcc_64" >> "$GITHUB_ENV"
       - name: Tag matches version
         run: |
           v=$(python -c "import gifpop; print(gifpop.__version__)")

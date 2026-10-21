@@ -3,3 +3,5 @@ __pycache__/
 .claude/
 gifpop/_builtin.py
 dist/
+gifpop/libgifpopblur.so
+aqtinstall.log

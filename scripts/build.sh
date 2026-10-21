@@ -5,6 +5,9 @@
 # ($PYTHON picks the interpreter, default python3). With KLIPY_API_KEY set the KLIPY key is
 # baked in (scrambled) and the build fails if the plain key shows up anywhere in the bundle.
 # Without it the build works but users have to add their own key. Release CI always sets it.
+# With QT_PREFIX (an aqtinstall Qt 6.11.2 gcc_64 dir, for headers) the native blur helper
+# packaging/blurhelper is built into the bundle and the build fails without it; unset, the
+# bundle has no window blur (opaque fallback). CI and release always set it.
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 py="${PYTHON:-python3}"
@@ -31,6 +34,15 @@ if [ -n "${KLIPY_API_KEY:-}" ]; then
   check=(--expect-builtin)
 fi
 
+# 1b. Native blur helper (KWin blur on Wayland), built for the bundled Qt's version.
+if [ -n "${QT_PREFIX:-}" ]; then
+  [ -d "$QT_PREFIX/include/QtGui" ] || { echo "QT_PREFIX=$QT_PREFIX has no Qt headers" >&2; exit 1; }
+  "$root/packaging/blurhelper/build.sh" "$QT_PREFIX" "$build/src/gifpop/libgifpopblur.so"
+  test -s "$build/src/gifpop/libgifpopblur.so"
+else
+  echo "warning: QT_PREFIX not set, building without the blur helper (no window blur)" >&2
+fi
+
 # 2. Source smoke test against the staged copy (same code that gets frozen).
 mkdir -p "$build/src/tests"
 cp "$root/tests/smoke.py" "$build/src/tests/"
@@ -54,6 +66,24 @@ if [ -n "${KLIPY_API_KEY:-}" ]; then
   # The key module must be inside the frozen archive, or release users get no key.
   "$py" -c 'import sys; from PyInstaller.archive.readers import pkg_archive_contents as c
 assert "gifpop._builtin" in c(sys.argv[1]), "gifpop._builtin is not in the frozen app"' "$app/gifpop"
+fi
+
+if [ -n "${QT_PREFIX:-}" ]; then
+  # The helper must be in the bundle, and its Qt deps must resolve to the bundled Qt
+  # (nothing from QT_PREFIX or the system collected next to it).
+  helper="$app/_internal/gifpop/libgifpopblur.so"
+  test -s "$helper" || { echo "blur helper missing from the bundle" >&2; exit 1; }
+  if find "$app/_internal" -maxdepth 1 -name 'libQt6*' ! -type l | grep -q .; then
+    echo "stray Qt libraries at the top of the bundle:" >&2
+    find "$app/_internal" -maxdepth 1 -name 'libQt6*' ! -type l >&2
+    exit 1
+  fi
+  deps="$(LD_LIBRARY_PATH="$app/_internal/PyQt6/Qt6/lib" ldd "$helper")"
+  if grep -q 'not found' <<<"$deps" \
+     || grep -F 'libQt6' <<<"$deps" | grep -vqF "$app/_internal/PyQt6/Qt6/lib/"; then
+    echo "blur helper's Qt libraries don't resolve to the bundled Qt:" >&2; echo "$deps" >&2
+    exit 1
+  fi
 fi
 
 # 4. Smoke test the frozen app: starts headless, stays up, `--quit` stops it.

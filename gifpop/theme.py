@@ -1,26 +1,59 @@
 """GifPop's look: palette-driven QSS (dark and light) and a frosted window background.
 
-The blur comes from KDE's KWindowEffects (libKF6WindowSystem), called through ctypes.
-If it can't load (not KDE, or a Qt build it doesn't match) the window is just drawn
-near-opaque instead."""
+The blur comes from one of two places:
+- libgifpopblur.so next to this file (the release bundle ships it in _internal/gifpop/):
+  a small helper built against the bundled Qt that speaks KWin's blur protocol on Wayland.
+- Otherwise (source installs on the system Qt), KDE's KWindowEffects from
+  libKF6WindowSystem, called through ctypes. Never inside the frozen bundle: that library
+  would drag the system Qt into a process already running the bundled one.
+If neither works (not KDE, not Wayland, missing library) the window is drawn near-opaque."""
 import ctypes
+import sys
+from pathlib import Path
 
 from PyQt6 import sip
 from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPainterPath, QRegion
 
+from .config import TILING_WM
+
 RADIUS = 12
 
-try:
-    _kws = ctypes.CDLL("libKF6WindowSystem.so.6")
-    _blur = _kws["_ZN14KWindowEffects16enableBlurBehindEP7QWindowbRK7QRegion"]
-    _blur.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_void_p]
-    _blur.restype = None
-    _avail = _kws["_ZN14KWindowEffects17isEffectAvailableENS_6EffectE"]
-    _avail.argtypes = [ctypes.c_int]
-    _avail.restype = ctypes.c_bool
-except (OSError, AttributeError, TypeError):
-    _blur = _avail = None
+_HELPER_PATH = Path(__file__).with_name("libgifpopblur.so")
+_helper = None      # gifpop_blur() once loaded, False if it can't be
+_granted = False    # the helper's last blur request on a shown window succeeded
+
+_blur = _avail = None
+if not getattr(sys, "frozen", False) and not _HELPER_PATH.exists():
+    try:
+        _kws = ctypes.CDLL("libKF6WindowSystem.so.6")
+        _blur = _kws["_ZN14KWindowEffects16enableBlurBehindEP7QWindowbRK7QRegion"]
+        _blur.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_void_p]
+        _blur.restype = None
+        _avail = _kws["_ZN14KWindowEffects17isEffectAvailableENS_6EffectE"]
+        _avail.argtypes = [ctypes.c_int]
+        _avail.restype = ctypes.c_bool
+    except (OSError, AttributeError, TypeError):
+        _blur = _avail = None
+
+
+def _load_helper():
+    """The helper's gifpop_blur(), loaded on first use, or None.
+
+    Only on the Wayland platform (it speaks Wayland protocols). Its Qt6Gui/Core deps resolve
+    to the copies already loaded in the process (the bundled Qt), never the system's."""
+    global _helper
+    if _helper is None:
+        _helper = False
+        if _HELPER_PATH.exists() and QGuiApplication.platformName().startswith("wayland"):
+            try:
+                fn = ctypes.CDLL(str(_HELPER_PATH))["gifpop_blur"]
+                fn.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int]
+                fn.restype = ctypes.c_int
+                _helper = fn
+            except (OSError, AttributeError, TypeError):
+                pass
+    return _helper or None
 
 
 def is_dark():
@@ -31,20 +64,45 @@ def is_dark():
 
 
 def blur_possible():
-    """True once KWin has advertised the blur protocol (False before first show)."""
-    return bool(_avail and _avail(7))
+    """True once the compositor has granted/advertised blur (False before first show).
+    Hyprland blurs translucent windows by itself (decoration:blur), no request needed."""
+    if TILING_WM == "hyprland":
+        return True
+    if _HELPER_PATH.exists():
+        return _granted
+    try:
+        return bool(_avail and _avail(7))
+    except Exception:
+        return False
 
 
 def set_blur(widget, on=True, radius=RADIUS):
-    """Ask KWin to blur behind `widget` (must be shown). Silently no-op elsewhere."""
-    win = widget.windowHandle()
-    if not _blur or win is None:
+    """Ask KWin to blur behind `widget` (must be shown; call again after a resize).
+
+    Helper: returns its result (1 blur requested, 0 unsupported, -1 error).
+    KWindowEffects: True if the request was sent. Never raises."""
+    global _granted
+    try:
+        win = widget.windowHandle()
+        if win is None:
+            return False
+        if _HELPER_PATH.exists():
+            fn = _load_helper()
+            if fn is None:
+                return 0
+            result = fn(sip.unwrapinstance(win), 1 if on else 0, int(radius))
+            if on:
+                _granted = result == 1
+            return result
+        if not _blur:
+            return False
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(widget.rect()), radius, radius)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        _blur(sip.unwrapinstance(win), on, sip.unwrapinstance(region))
+        return True
+    except Exception:
         return False
-    path = QPainterPath()
-    path.addRoundedRect(QRectF(widget.rect()), radius, radius)
-    region = QRegion(path.toFillPolygon().toPolygon())
-    _blur(sip.unwrapinstance(win), on, sip.unwrapinstance(region))
-    return True
 
 
 def surface_color(widget, blurred):
