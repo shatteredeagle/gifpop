@@ -550,17 +550,28 @@ def main(argv=None):
 
     def on_conn():
         s = server.nextPendingConnection()
+        buf = bytearray()
 
-        def read():
-            parts = bytes(s.readAll()).decode().split()
+        # The sender writes one message and disconnects. Act on disconnect, after the
+        # last read: handling readyRead alone loses the message when the disconnect is
+        # processed first (seen as `--quit` sometimes doing nothing).
+        def done():
+            if getattr(s, "_handled", False):
+                return
+            s._handled = True
+            buf.extend(bytes(s.readAll()))
+            s.deleteLater()
+            parts = buf.decode(errors="replace").split()
             if not parts:
                 return
             if parts[0] == "quit":
                 app.quit()
             elif parts[0] != "noop":
                 win.summon(parts[0], parts[1] if len(parts) > 1 else "")
-        s.readyRead.connect(read)
-        s.disconnected.connect(s.deleteLater)
+        s.readyRead.connect(lambda: buf.extend(bytes(s.readAll())))
+        s.disconnected.connect(done)
+        if s.state() != s.LocalSocketState.ConnectedState:  # gone before we connected
+            done()
     server.newConnection.connect(on_conn)
 
     win._tray = make_tray(win) if QSystemTrayIcon.isSystemTrayAvailable() else None
