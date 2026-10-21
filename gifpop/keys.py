@@ -7,6 +7,7 @@ API keys (they identify the app; they don't guard anything private).
 A key typed into Settings always wins over the built-in one.
 """
 import base64
+from urllib.parse import quote
 
 SALT = b"gifpop: not a secret, just not greppable"
 
@@ -39,5 +40,5 @@ def redact(text, *keys):
     """Keep API keys out of error messages (Qt puts the request URL in them)."""
     for k in (BUILTIN_KLIPY, *keys):
         if k:
-            text = text.replace(k, "…")
+            text = text.replace(k, "…").replace(quote(k, safe=""), "…")
     return text

@@ -206,7 +206,7 @@ class GifPage(QWidget):
         self.status.setText("" if self.tiles else "No results.")
 
     def report_share(self, gif):
-        if self.mode == "recent" or not self.cfg.api_key:
+        if (self.mode == "recent" and not self.query) or not self.cfg.api_key:
             return
         ping = self.provider.share(gif, self.query)
         if ping:

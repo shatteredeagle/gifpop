@@ -32,7 +32,7 @@ if ! "$py" -c "import PyQt6.QtWidgets, PyQt6.QtNetwork" 2>/dev/null; then
 fi
 
 # Fresh copy of the app (leaves your settings, recents and templates alone).
-pkill -f "python3 -m gifpop" 2>/dev/null || true
+pkill -f "python3 -m gifpop( |$)" 2>/dev/null || true
 rm -rf "$lib"
 mkdir -p "$lib" "$bin" "$apps" "$icons" "$autostart"
 cp -r "$here/gifpop" "$lib/"
@@ -84,15 +84,18 @@ emojier_alt=503316512                 # Meta+Ctrl+Alt+Shift+Space, Plasma's othe
 gifpop_id="['gifpop.desktop','_launch','GifPop','Launch GifPop']"
 emojier_id="['org.kde.plasma.emojier.desktop','_launch','Emoji Selector','Emoji Selector']"
 if command -v gdbus >/dev/null && kga allMainComponents >/dev/null 2>&1; then
-  if [ "$hotkey" = ask ]; then
+  if [ "$hotkey" = ask ] && [ ! -t 0 ]; then
+    echo "No terminal to ask about Win+.; skipping. Re-run with --hotkey to bind it."
+    hotkey=no
+  elif [ "$hotkey" = ask ]; then
     read -r -p "Open GifPop with Win+. (replaces Plasma's emoji picker shortcut)? [Y/n] " a || a=n
     case "$a" in [nN]*) hotkey=no ;; *) hotkey=yes ;; esac
   fi
   if [ "$hotkey" = yes ]; then
     kga setForeignShortcut "$emojier_id" "[$emojier_alt]" >/dev/null 2>&1 || true
-    kga doRegister "$gifpop_id" >/dev/null
-    kga setForeignShortcut "$gifpop_id" "[$meta_period]" >/dev/null
-    if kga shortcutKeys "$gifpop_id" | grep -q "$meta_period"; then
+    kga doRegister "$gifpop_id" >/dev/null 2>&1 || true
+    kga setForeignShortcut "$gifpop_id" "[$meta_period]" >/dev/null 2>&1 || true
+    if kga shortcutKeys "$gifpop_id" 2>/dev/null | grep -q "$meta_period"; then
       echo "Win+. now opens GifPop. (Emoji picker: Meta+Ctrl+Alt+Shift+Space, or the 😀 button.)"
     else
       echo "Couldn't take Win+.: another app holds it. Set it by hand:"
