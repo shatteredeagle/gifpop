@@ -96,7 +96,8 @@ def style():
     return f"""
 * {{ font-size: 10pt; }}
 QWidget#root, QStackedWidget, QScrollArea, #qt_scrollarea_viewport, #gridHost,
-#qt_scrollarea_vcontainer, #qt_scrollarea_hcontainer
+#qt_scrollarea_vcontainer, #qt_scrollarea_hcontainer,
+QScrollArea > QWidget > QWidget, MasonryHost, #emptyState
     {{ background: transparent; border: none; }}
 
 /* header tabs: pill segmented control */
