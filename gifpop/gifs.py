@@ -4,6 +4,7 @@ from PyQt6.QtGui import QMovie
 from PyQt6.QtWidgets import (QGridLayout, QHBoxLayout, QLabel, QLineEdit, QMenu,
                              QPushButton, QScrollArea, QSizePolicy, QVBoxLayout, QWidget)
 
+from .keys import redact
 from .providers import Gif, make_provider
 
 COLUMNS = 3
@@ -71,7 +72,7 @@ class GifPage(QWidget):
         self.loading = None
         self.tiles = []
 
-        self.search = QLineEdit(placeholderText="Search GIFs")
+        self.search = QLineEdit(placeholderText=f"Search {self.provider.name}")
         self.search.setClearButtonEnabled(True)
         self.debounce = QTimer(self, singleShot=True, interval=350)
         self.debounce.timeout.connect(self._run_search)
@@ -176,6 +177,7 @@ class GifPage(QWidget):
 
     def _fetch(self, reset):
         self.attrib.setText(f"Powered by {self.provider.name}")
+        self.search.setPlaceholderText(f"Search {self.provider.name}")  # KLIPY requires this
         if not self.cfg.api_key:
             self._clear()
             self.status.setText(
@@ -203,8 +205,16 @@ class GifPage(QWidget):
         self._add(gifs)
         self.status.setText("" if self.tiles else "No results.")
 
+    def report_share(self, gif):
+        if self.mode == "recent" or not self.cfg.api_key:
+            return
+        ping = self.provider.share(gif, self.query)
+        if ping:
+            self.net.post_json(*ping)
+
     def _err(self, msg):
         self.loading = None
+        msg = redact(msg, self.cfg["klipy_key"], self.cfg["giphy_key"])
         hint = " Check the API key in Settings." if any(c in msg for c in ("401", "403")) else ""
         self.status.setText(f"Search failed: {msg}.{hint}")
 

@@ -19,7 +19,9 @@ from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, Q
                              QSystemTrayIcon, QVBoxLayout, QWidget)
 
 from .config import ASSETS, OUT_DIR, Config, Recents
+from . import __version__
 from .gifs import GifPage
+from .keys import BUILTIN_KLIPY
 from .memes import MemeEditor, TemplatePage
 from .net import Net
 
@@ -64,6 +66,8 @@ class SettingsDialog(QDialog):
         self.provider.setCurrentIndex(0 if cfg["provider"] == "klipy" else 1)
         self.klipy = QLineEdit(cfg["klipy_key"], echoMode=QLineEdit.EchoMode.Password)
         self.giphy = QLineEdit(cfg["giphy_key"], echoMode=QLineEdit.EchoMode.Password)
+        if BUILTIN_KLIPY:
+            self.klipy.setPlaceholderText("Built in. Leave empty unless you have your own.")
         self.filter = QComboBox()
         for v in ("off", "low", "medium", "high"):
             self.filter.addItem(v, v)
@@ -83,6 +87,9 @@ class SettingsDialog(QDialog):
         links = QLabel('Free keys: <a href="https://partner.klipy.com">partner.klipy.com</a> · '
                        '<a href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>')
         links.setOpenExternalLinks(True)
+        about = QLabel(f"GifPop {__version__} · GPL-3.0 · independent app, not affiliated with "
+                       "or endorsed by KLIPY or GIPHY")
+        about.setObjectName("caption")
         form = QFormLayout(self)
         form.addRow("GIF source", self.provider)
         form.addRow("KLIPY key", self.klipy)
@@ -93,6 +100,7 @@ class SettingsDialog(QDialog):
         form.addRow("Copy as", self.mode)
         form.addRow(self.auto_hide)
         form.addRow("Emoji button runs", self.emoji)
+        form.addRow(about)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                               | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
@@ -261,6 +269,9 @@ class MainWindow(QWidget):
         self.flash("Downloading…")
 
         def ok(data):
+            # Only the GIF on the clipboard is kept on disk; no library of downloads.
+            for old in OUT_DIR.glob("*.gif"):
+                old.unlink(missing_ok=True)
             path = OUT_DIR / f"{safe_name(gif.title, 'gif')}-{safe_name(gif.id, 'x')}.gif"
             path.write_bytes(data)
             mime = QMimeData()
@@ -271,12 +282,14 @@ class MainWindow(QWidget):
                          QByteArray(b"copy\n" + url.toEncoded().data()))
             self._set_clipboard(mime)
             self.recents.add(gif.to_dict())
+            self.gifs.report_share(gif)
             self.flash("Copied — press Ctrl+V to paste", hide=True)
-        self.net.get(gif.full, ok, lambda m: self.flash(f"Download failed: {m}"))
+        self.net.get(gif.full, ok, lambda m: self.flash(f"Download failed: {m}"), store=False)
 
     def copy_link(self, gif):
         QGuiApplication.clipboard().setText(gif.url)
         self.recents.add(gif.to_dict())
+        self.gifs.report_share(gif)
         self.flash("Link copied — press Ctrl+V to paste", hide=True)
 
     def save_gif(self, gif):
@@ -286,12 +299,12 @@ class MainWindow(QWidget):
         if path:
             self.net.get(gif.full, lambda d: (open(path, "wb").write(d),
                                               self.flash(f"Saved {os.path.basename(path)}")),
-                         lambda m: self.flash(f"Download failed: {m}"))
+                         lambda m: self.flash(f"Download failed: {m}"), store=False)
 
     def caption_gif(self, gif):
         self.flash("Opening first frame in the meme maker…")
         self.net.get(gif.full, lambda d: self.open_editor(QImage.fromData(d), 2),
-                     lambda m: self.flash(f"Download failed: {m}"))
+                     lambda m: self.flash(f"Download failed: {m}"), store=False)
 
     def open_editor(self, image, boxes):
         if image.isNull():

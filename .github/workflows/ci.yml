@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.13"
+      - name: Qt runtime libraries
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: pip install PyQt6
+      - name: Syntax
+        run: |
+          python -m py_compile gifpop/*.py scripts/*.py tests/*.py
+          bash -n install.sh uninstall.sh scripts/build.sh
+      - name: No key in the repo
+        run: test ! -e gifpop/_builtin.py
+      - name: Smoke test (no key)
+        run: python tests/smoke.py
+      - name: Build with a dummy key
+        env:
+          KLIPY_API_KEY: ci-dummy-key
+          PYTHON: python
+        run: |
+          scripts/build.sh
+          tar -xzf dist/gifpop-*.tar.gz -C dist
+          if grep -rqF ci-dummy-key dist/gifpop-*/; then echo "plain key found in the build"; exit 1; fi

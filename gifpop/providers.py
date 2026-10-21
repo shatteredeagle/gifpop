@@ -36,11 +36,19 @@ class Klipy:
         params = {"page": page, "per_page": per_page,
                   "customer_id": self.cfg["customer_id"],
                   "content_filter": self.cfg["content_filter"]}
-        key = quote(self.cfg["klipy_key"], safe="")
+        key = quote(self.cfg.klipy, safe="")
         if query:
             params["q"] = query
             return f"{self.base}/{key}/gifs/search?{urlencode(params)}"
         return f"{self.base}/{key}/gifs/trending?{urlencode(params)}"
+
+    def share(self, gif, query):
+        """KLIPY asks apps to report which GIF was sent (improves its ranking)."""
+        body = {"customer_id": self.cfg["customer_id"]}
+        if query:
+            body["q"] = query
+        key = quote(self.cfg.klipy, safe="")
+        return f"{self.base}/{key}/gifs/share/{quote(gif.id, safe='')}", body
 
     def parse(self, raw):
         j = json.loads(raw)
@@ -53,7 +61,7 @@ class Klipy:
             if it.get("type", "gif") != "gif" or not f:
                 continue  # skips ad slots
             full = _pick(f, order)
-            out.append(Gif(id=str(it.get("id") or it.get("slug")),
+            out.append(Gif(id=str(it.get("slug") or it.get("id")),  # slug: the share ping wants it
                            title=it.get("title") or "",
                            preview=_pick(f, ["sm", "xs", "md"]) or full,
                            full=full, url=full))
@@ -69,6 +77,9 @@ class Giphy:
     def __init__(self, cfg):
         self.cfg = cfg
         self.per_page = 30
+
+    def share(self, gif, query):
+        return None
 
     def url(self, query, page, per_page=30):
         self.per_page = per_page

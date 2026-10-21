@@ -4,6 +4,8 @@ import os
 import uuid
 from pathlib import Path
 
+from .keys import BUILTIN_KLIPY
+
 APP = "gifpop"
 
 
@@ -27,7 +29,7 @@ DEFAULTS = {
     "copy_quality": "md",         # size bucket used for the copied file: hd/md/sm
     "copy_mode": "file",          # file = paste as a GIF attachment, link = paste the URL
     "auto_hide": True,
-    "emoji_command": "flatpak run dev.krtirtho.Flemozi",
+    "emoji_command": "plasma-emojier",
     "customer_id": "",
 }
 
@@ -51,8 +53,13 @@ class Config(dict):
         self.path.write_text(json.dumps(self, indent=2))
 
     @property
+    def klipy(self):
+        """The key typed into Settings, else the one baked into release builds."""
+        return self["klipy_key"] or BUILTIN_KLIPY
+
+    @property
     def api_key(self):
-        return self["klipy_key"] if self["provider"] == "klipy" else self["giphy_key"]
+        return self.klipy if self["provider"] == "klipy" else self["giphy_key"]
 
 
 class Recents:
