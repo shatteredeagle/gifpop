@@ -163,7 +163,7 @@ QFrame#tabs, QWidget#segmented {{ background: {fill}; border: 1px solid {stroke}
 QPushButton#segment {{ padding: 4px 12px; border: none; border-radius: 7px;
     background: transparent; color: palette(text); }}
 QPushButton#segment:hover {{ background: {fill_hover}; }}
-QPushButton#segment:checked {{ background: {fill_press}; color: palette(highlight); font-weight: 600; }}
+QPushButton#segment:checked {{ background: {fill_press}; color: palette(text); font-weight: 600; border-bottom: 2px solid palette(highlight); }}
 QToolButton#iconBtn, QToolButton#tileAction, QToolButton#danger, QToolButton#swatchCustom {{
     border: none; border-radius: 8px; background: transparent; padding: 3px; }}
 QToolButton#iconBtn:hover, QToolButton#tileAction:hover, QToolButton#swatchCustom:hover
@@ -190,7 +190,7 @@ QDialog {{ background: palette(window); }}
 QPushButton#tab {{ padding: 5px 14px; border: none; border-radius: 8px;
     background: transparent; color: palette(text); font-weight: 600; }}
 QPushButton#tab:hover {{ background: {fill_hover}; }}
-QPushButton#tab:checked {{ background: {fill_press}; color: palette(highlight); }}
+QPushButton#tab:checked {{ background: {fill_press}; color: palette(text); border-bottom: 2px solid palette(highlight); }}
 
 /* icon buttons (emoji / gear / back) */
 QPushButton[flat="true"] {{ border: none; border-radius: 8px; padding: 4px 8px;
