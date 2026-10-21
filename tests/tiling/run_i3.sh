@@ -48,7 +48,8 @@ export I3SOCK   # GifPop reads it to know it's on a tiling WM
 
 wm_log() { echo "$TMP/i3.log"; }
 wm_tree() { timeout 5 i3-msg -t get_tree; }
-wm_focus() { timeout 5 i3-msg "[instance=\"(?i)^$1\$\"] focus" >/dev/null; }
+# Match by title: under xcb Qt takes WM_CLASS instance from argv[0] ("python"), not the app name.
+wm_focus() { timeout 5 i3-msg "[title=\"^$1\$\"] focus" >/dev/null; }
 wm_describe() {
     local tree outs
     tree=$(wm_tree) && outs=$(timeout 5 i3-msg -t get_outputs) || return 1
