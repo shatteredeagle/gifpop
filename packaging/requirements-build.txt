@@ -1,0 +1,7 @@
+# Pinned toolchain for the release bundle (scripts/build.sh). Bump together, then rebuild
+# and run the frozen smoke test. PyQt6-Qt6 6.11 wheels need glibc >= 2.34.
+PyQt6==6.11.0
+PyQt6-Qt6==6.11.2
+PyQt6-sip==13.13.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9

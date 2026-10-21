@@ -23,23 +23,36 @@ for var in ("XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME"):
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 (tmp / "xdg_config_home/gifpop").mkdir(parents=True)
 (tmp / "xdg_config_home/gifpop/config.json").write_text(json.dumps(
-    {"klipy_key": key, "memes_dir": str(tmp / "memes")}))
+    {"klipy_key": key, "memes_dir": str(tmp / "memes"), "auto_hide": False}))
 sys.path.insert(0, str(root))
 
 from PyQt6.QtCore import QTimer  # noqa: E402
+from PyQt6.QtGui import QColor, QImage, QLinearGradient, QPainter  # noqa: E402
 from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 from gifpop import app as gp  # noqa: E402
 from gifpop.config import Config  # noqa: E402
 
 app = QApplication([])
-app.setStyleSheet(gp.STYLE)
+gp.apply_theme(app)
 win = gp.MainWindow(Config())
 steps = []
 
 
 def shot(name, widget=None):
-    (widget or win).grab().save(str(out / f"{name}.png"))
+    # Composite over a wallpaper-ish gradient so the translucent surface reads like on a desktop.
+    w = widget or win
+    pm = w.grab()
+    bg = QImage(pm.size(), QImage.Format.Format_ARGB32)
+    p = QPainter(bg)
+    g = QLinearGradient(0, 0, pm.width(), pm.height())
+    g.setColorAt(0, QColor("#2b5876"))
+    g.setColorAt(0.5, QColor("#4e4376"))
+    g.setColorAt(1, QColor("#c06c84"))
+    p.fillRect(bg.rect(), g)
+    p.drawPixmap(0, 0, pm)
+    p.end()
+    bg.save(str(out / f"{name}.png"))
     print("shot", name)
 
 

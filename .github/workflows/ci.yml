@@ -9,28 +9,46 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-24.04
+    # Oldest supported runner on purpose: the bundle runs on glibc >= the build host's (2.35).
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.13"
-      - name: Qt runtime libraries
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
-      - run: pip install PyQt6
+          python-version: "3.12"
+      - name: Qt runtime libraries (also bundled from here)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libfontconfig1 libdbus-1-3 \
+            libxkbcommon0 libxkbcommon-x11-0 libwayland-client0 libwayland-cursor0 libwayland-egl1 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-randr0 \
+            libxcb-render-util0 libxcb-shape0 libxcb-xinerama0 libxcb-xkb1
+      - name: Build toolchain (pinned)
+        run: pip install -r packaging/requirements-build.txt
       - name: Syntax
         run: |
-          python -m py_compile gifpop/*.py scripts/*.py tests/*.py
-          bash -n install.sh uninstall.sh scripts/build.sh
+          python -m py_compile gifpop/*.py scripts/*.py tests/*.py packaging/*.py
+          bash -n install.sh uninstall.sh get.sh scripts/build.sh scripts/smoke_frozen.sh
       - name: No key in the repo
         run: test ! -e gifpop/_builtin.py
-      - name: Smoke test (no key)
+      - name: Smoke test from source (no key)
         run: python tests/smoke.py
-      - name: Build with a dummy key
+      - name: Build the bundle with a dummy key (runs the source + frozen smoke tests)
         env:
           KLIPY_API_KEY: ci-dummy-key
           PYTHON: python
+        run: scripts/build.sh
+      - name: Check the tarball
         run: |
-          scripts/build.sh
-          tar -xzf dist/gifpop-*.tar.gz -C dist
-          if grep -rqF ci-dummy-key dist/gifpop-*/; then echo "plain key found in the build"; exit 1; fi
+          mkdir check && tar -xzf dist/gifpop.tar.gz -C check
+          d=$(echo check/gifpop-*)
+          for f in app/gifpop install.sh uninstall.sh README.md LICENSE CHANGELOG.md; do test -e "$d/$f"; done
+          (cd dist && sha256sum -c SHA256SUMS)
+          if grep -rqaF ci-dummy-key check/; then echo "plain key found in the bundle"; exit 1; fi
+          scripts/smoke_frozen.sh "$d/app/gifpop"
+          du -sh dist/gifpop.tar.gz "$d/app"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gifpop-bundle-dummy-key
+          path: dist/gifpop.tar.gz
+          retention-days: 7

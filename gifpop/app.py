@@ -11,17 +11,19 @@ import shlex
 import sys
 import time
 
-from PyQt6.QtCore import QBuffer, QByteArray, QMimeData, QProcess, Qt, QTimer, QUrl
+from PyQt6.QtCore import (QBuffer, QByteArray, QMimeData, QProcess, QPropertyAnimation, Qt,
+                          QTimer, QUrl)
 from PyQt6.QtGui import (QFont, QFontDatabase, QGuiApplication, QIcon,
                          QImage, QKeySequence, QShortcut)
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import (QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog,
-                             QDialogButtonBox, QFileDialog, QFormLayout, QHBoxLayout,
-                             QLabel, QLineEdit, QMenu, QPushButton, QStackedWidget,
-                             QSystemTrayIcon, QVBoxLayout, QWidget)
+                             QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
+                             QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QMenu,
+                             QPushButton, QStackedWidget, QSystemTrayIcon, QToolButton,
+                             QVBoxLayout, QWidget)
 
 from .config import ASSETS, DEFAULT_MEMES_DIR, OUT_DIR, Config, Recents
-from . import __version__
+from . import __version__, theme
 from .gifs import GifPage
 from .keys import BUILTIN_KLIPY
 from .memes import MemeEditor, TemplatePage
@@ -29,20 +31,16 @@ from .net import Net
 
 SOCKET = f"gifpop-{os.getuid()}"
 GIF_SIZE = (480, 600)
-MEME_SIZE = (1000, 680)
+MEME_SIZE = (760, 600)
 
-STYLE = """
-QWidget { font-size: 10pt; }
-#tile { background: palette(alternate-base); border-radius: 6px; }
-#tile:hover { background: palette(highlight); }
-#caption, #status, #attrib { color: palette(placeholder-text); font-size: 8.5pt; }
-QPushButton#chip { padding: 3px 9px; border-radius: 11px; border: 1px solid palette(mid); }
-QPushButton#chip[active="true"] { background: palette(highlight); color: palette(highlighted-text); }
-QPushButton#tab { padding: 5px 12px; border: none; border-bottom: 2px solid transparent; }
-QPushButton#tab:checked { border-bottom: 2px solid palette(highlight); font-weight: bold; }
-QPushButton#primary { background: palette(highlight); color: palette(highlighted-text); padding: 5px 18px; }
-#canvas { background: #202020; }
-"""
+
+
+def apply_theme(app):
+    """Fusion + our QSS: Breeze paints opaque strips behind scrollbars in a translucent
+    window, and the QSS covers nearly everything anyway. Follows dark/light switches."""
+    app.setStyle("Fusion")
+    app.setStyleSheet(theme.style())
+    app.styleHints().colorSchemeChanged.connect(lambda _: app.setStyleSheet(theme.style()))
 
 
 def app_icon():
@@ -63,62 +61,102 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("GifPop settings")
         self.cfg = cfg
         self.provider = QComboBox()
-        self.provider.addItem("KLIPY (what Discord/WhatsApp moved to)", "klipy")
-        self.provider.addItem("GIPHY", "giphy")
+        self.provider.addItem("KLIPY", "klipy")
+        self.provider.addItem("GIPHY (needs your own key)", "giphy")
         self.provider.setCurrentIndex(0 if cfg["provider"] == "klipy" else 1)
-        self.klipy = QLineEdit(cfg["klipy_key"], echoMode=QLineEdit.EchoMode.Password)
-        self.giphy = QLineEdit(cfg["giphy_key"], echoMode=QLineEdit.EchoMode.Password)
-        if BUILTIN_KLIPY:
-            self.klipy.setPlaceholderText("Built in. Leave empty unless you have your own.")
         self.filter = QComboBox()
-        for v in ("off", "low", "medium", "high"):
-            self.filter.addItem(v, v)
-        self.filter.setCurrentText(cfg["content_filter"])
+        for label, v in (("Off", "off"), ("Low", "low"), ("Medium", "medium"), ("High", "high")):
+            self.filter.addItem(label, v)
+        self.filter.setCurrentIndex(max(0, self.filter.findData(cfg["content_filter"])))
         self.quality = QComboBox()
-        for label, v in (("High (big files)", "hd"), ("Medium", "md"), ("Small", "sm")):
+        for label, v in (("High (bigger files)", "hd"), ("Medium", "md"), ("Small", "sm")):
             self.quality.addItem(label, v)
         self.quality.setCurrentIndex(["hd", "md", "sm"].index(cfg["copy_quality"]))
         self.mode = QComboBox()
         self.mode.addItem("GIF file (pastes as an attachment)", "file")
         self.mode.addItem("Link (pastes the URL as text)", "link")
         self.mode.setCurrentIndex(0 if cfg["copy_mode"] == "file" else 1)
-        self.auto_hide = QCheckBox("Hide after copying / when focus leaves")
-        self.auto_hide.setChecked(cfg["auto_hide"])
-        self.emoji = QLineEdit(cfg["emoji_command"])
-        self.save_memes = QCheckBox("Keep a copy of memes I make (My memes)")
+
+        self.own_key = QCheckBox("Use my own API key")
+        self.own_key.setChecked(bool(cfg["klipy_key"] or cfg["giphy_key"]) or not BUILTIN_KLIPY)
+        self.klipy = QLineEdit(cfg["klipy_key"], echoMode=QLineEdit.EchoMode.Password,
+                               placeholderText="KLIPY key")
+        self.giphy = QLineEdit(cfg["giphy_key"], echoMode=QLineEdit.EchoMode.Password,
+                               placeholderText="GIPHY key")
+        key_hint = QLabel(
+            ("GifPop includes a KLIPY key. Add your own only if searches start failing. "
+             if BUILTIN_KLIPY else "") +
+            'Free keys: <a href="https://partner.klipy.com">partner.klipy.com</a> · '
+            '<a href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>',
+            objectName="hint", wordWrap=True, openExternalLinks=True)
+
+        self.save_memes = QCheckBox("Keep a copy of every meme I make")
         self.save_memes.setChecked(cfg["save_memes"])
         self.memes_dir = QLineEdit(cfg["memes_dir"], placeholderText=str(DEFAULT_MEMES_DIR))
+        browse = QPushButton("Browse…")
+        browse.clicked.connect(self._browse)
+        folder = QHBoxLayout()
+        folder.addWidget(self.memes_dir, 1)
+        folder.addWidget(browse)
+        self.save_memes.toggled.connect(self.memes_dir.setEnabled)
+        self.save_memes.toggled.connect(browse.setEnabled)
+        self.memes_dir.setEnabled(cfg["save_memes"])
+        browse.setEnabled(cfg["save_memes"])
 
-        links = QLabel('Free keys: <a href="https://partner.klipy.com">partner.klipy.com</a> · '
-                       '<a href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>')
-        links.setOpenExternalLinks(True)
-        about = QLabel(f"GifPop {__version__} · GPL-3.0 · independent app, not affiliated with "
-                       "or endorsed by KLIPY or GIPHY")
-        about.setObjectName("caption")
+        self.auto_hide = QCheckBox("Hide after copying or when I click elsewhere")
+        self.auto_hide.setChecked(cfg["auto_hide"])
+        self.emoji = QLineEdit(cfg["emoji_command"])
+
         form = QFormLayout(self)
-        form.addRow("GIF source", self.provider)
-        form.addRow("KLIPY key", self.klipy)
-        form.addRow("GIPHY key", self.giphy)
-        form.addRow(links)
+        form.setVerticalSpacing(8)
+        section = lambda t: form.addRow(QLabel(t, objectName="sectionTitle"))  # noqa: E731
+        section("GIFs")
+        form.addRow("Source", self.provider)
         form.addRow("Content filter", self.filter)
         form.addRow("Copy quality", self.quality)
         form.addRow("Copy as", self.mode)
+        form.addRow(self.own_key)
+        form.addRow("KLIPY key", self.klipy)
+        form.addRow("GIPHY key", self.giphy)
+        form.addRow(key_hint)
+        section("Memes")
+        form.addRow(self.save_memes)
+        form.addRow("Folder", folder)
+        section("General")
         form.addRow(self.auto_hide)
         form.addRow("Emoji button runs", self.emoji)
-        form.addRow(self.save_memes)
-        form.addRow("My memes folder", self.memes_dir)
-        form.addRow(about)
+
+        about = QLabel(f"GifPop {__version__} · GPL-3.0 · independent, not affiliated with "
+                       "KLIPY or GIPHY", objectName="caption", wordWrap=True)
         bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
                               | QDialogButtonBox.StandardButton.Cancel)
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
-        form.addRow(bb)
-        self.setMinimumWidth(460)
+        bottom = QHBoxLayout()
+        bottom.addWidget(about, 1)
+        bottom.addWidget(bb)
+        form.addRow(bottom)
+
+        def sync():
+            own, giphy = self.own_key.isChecked(), self.provider.currentData() == "giphy"
+            form.setRowVisible(self.klipy, own)
+            form.setRowVisible(self.giphy, own or giphy)
+        self.own_key.toggled.connect(sync)
+        self.provider.currentIndexChanged.connect(sync)
+        sync()
+        self.setMinimumWidth(480)
+
+    def _browse(self):
+        d = QFileDialog.getExistingDirectory(self, "My memes folder",
+                                             self.memes_dir.text() or str(DEFAULT_MEMES_DIR))
+        if d:
+            self.memes_dir.setText(d)
 
     def accept(self):
         c = self.cfg
+        own = self.own_key.isChecked()
         c["provider"] = self.provider.currentData()
-        c["klipy_key"] = self.klipy.text().strip()
+        c["klipy_key"] = self.klipy.text().strip() if own else ""
         c["giphy_key"] = self.giphy.text().strip()
         c["content_filter"] = self.filter.currentData()
         c["copy_quality"] = self.quality.currentData()
@@ -139,6 +177,13 @@ class MainWindow(QWidget):
         self.recents = Recents()
         self.setWindowTitle("GifPop")
         self.setWindowIcon(app_icon())
+        self.setObjectName("root")
+        # Frameless popup with a frosted (KWin blur) rounded surface, like Win+.
+        self.setWindowFlag(Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.frosted = False
+        self.frost_timer = QTimer(self, singleShot=True, interval=300)
+        self.frost_timer.timeout.connect(self._frost_check)
         self.resize(*GIF_SIZE)
 
         fid = QFontDatabase.addApplicationFont(str(ASSETS / "Anton-Regular.ttf"))
@@ -157,6 +202,8 @@ class MainWindow(QWidget):
         self.gifs.picked.connect(self.copy_gif)
         self.gifs.copy_link.connect(self.copy_link)
         self.gifs.caption.connect(self.caption_gif)
+        self.gifs.need_key.connect(self.open_settings)
+        self.templates.open_settings.connect(self.open_settings)
         self.templates.open_image.connect(self.open_editor)
         self.templates.copy_saved.connect(lambda p: self.copy_meme(QImage(p), keep=False))
         self.editor.back.connect(lambda: self.show_page("meme"))
@@ -170,30 +217,36 @@ class MainWindow(QWidget):
         group.addButton(self.tab_meme)
         self.tab_gif.clicked.connect(lambda: self.show_page("gif"))
         self.tab_meme.clicked.connect(lambda: self.show_page("meme"))
-        emoji = QPushButton("😀")
-        emoji.setToolTip("Emoji picker")
-        emoji.setFlat(True)
-        emoji.clicked.connect(self.launch_emoji)
-        gear = QPushButton("⚙")
-        gear.setToolTip("Settings")
-        gear.setFlat(True)
-        gear.clicked.connect(self.open_settings)
+        tabs = QFrame(objectName="tabs")
+        tl = QHBoxLayout(tabs)
+        tl.setContentsMargins(3, 3, 3, 3)
+        tl.setSpacing(2)
+        tl.addWidget(self.tab_gif)
+        tl.addWidget(self.tab_meme)
+        emoji = self._icon_button("face-smile", "😀", "Emoji picker", self.launch_emoji)
+        gear = self._icon_button("configure", "⚙", "Settings (Ctrl+,)", self.open_settings)
 
         bar = QHBoxLayout()
         bar.setSpacing(2)
-        bar.addWidget(self.tab_gif)
-        bar.addWidget(self.tab_meme)
+        bar.addWidget(tabs)
         bar.addStretch()
         bar.addWidget(emoji)
         bar.addWidget(gear)
 
-        self.toast = QLabel(alignment=Qt.AlignmentFlag.AlignCenter)
-        self.toast.setObjectName("status")
+        # Floating toast over the bottom of the window, fades out on its own.
+        self.toast = QLabel(self, objectName="toast", alignment=Qt.AlignmentFlag.AlignCenter)
+        self.toast.hide()
+        self.toast_fx = QGraphicsOpacityEffect(self.toast)
+        self.toast.setGraphicsEffect(self.toast_fx)
+        self.toast_anim = QPropertyAnimation(self.toast_fx, b"opacity", self)
+        self.toast_anim.setDuration(180)
+        self.toast_timer = QTimer(self, singleShot=True, interval=1800)
+        self.toast_timer.timeout.connect(lambda: self._fade_toast(False))
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(8, 6, 8, 8)
+        lay.setContentsMargins(10, 8, 10, 10)
+        lay.setSpacing(8)
         lay.addLayout(bar)
         lay.addWidget(self.stack, 1)
-        lay.addWidget(self.toast)
 
         QShortcut(QKeySequence("Escape"), self, self.escape)
         QShortcut(QKeySequence("Ctrl+M"), self, lambda: self.show_page("meme"))
@@ -203,6 +256,18 @@ class MainWindow(QWidget):
         self.blur_timer = QTimer(self, singleShot=True, interval=200)
         self.blur_timer.timeout.connect(self._blur_check)
         self.show_page("gif")
+
+    def _icon_button(self, icon, fallback, tip, fn):
+        b = QToolButton(objectName="iconBtn", autoRaise=True, toolTip=tip)
+        ic = QIcon.fromTheme(icon)
+        if ic.isNull():
+            b.setText(fallback)
+        else:
+            b.setIcon(ic)
+        b.setFixedSize(30, 30)
+        b.setCursor(Qt.CursorShape.PointingHandCursor)
+        b.clicked.connect(fn)
+        return b
 
     def _tab(self, text):
         b = QPushButton(text)
@@ -226,7 +291,7 @@ class MainWindow(QWidget):
             self.resize(*GIF_SIZE)
             self.templates.ensure_loaded()
             self.templates.filter.setFocus()
-        self.toast.clear()
+        self.toast.hide()
 
     def summon(self, page="gif", token=""):
         if token:
@@ -264,10 +329,65 @@ class MainWindow(QWidget):
         e.ignore()
         self.hide()
 
-    def flash(self, msg, hide=False):
+    def flash(self, msg, hide=False, sticky=False):
         self.toast.setText(msg)
+        self._place_toast()
+        if self.toast.isHidden():
+            self._fade_toast(True)
+        if sticky:
+            self.toast_timer.stop()
+        else:
+            self.toast_timer.start()
         if hide and self.cfg["auto_hide"]:
-            QTimer.singleShot(450, self.hide)
+            QTimer.singleShot(550, self.hide)
+
+    def _place_toast(self):
+        self.toast.setMaximumWidth(self.width() - 40)
+        self.toast.adjustSize()
+        self.toast.move((self.width() - self.toast.width()) // 2,
+                        self.height() - self.toast.height() - 38)
+        self.toast.raise_()
+
+    def _fade_toast(self, show):
+        self.toast_anim.stop()
+        self.toast_anim.setStartValue(self.toast_fx.opacity() if self.toast.isVisible() else 0.0)
+        self.toast_anim.setEndValue(1.0 if show else 0.0)
+        try:
+            self.toast_anim.finished.disconnect()
+        except TypeError:
+            pass
+        if show:
+            self.toast.show()
+        else:
+            self.toast_anim.finished.connect(self.toast.hide)
+        self.toast_anim.start()
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if self.toast.isVisible():
+            self._place_toast()
+        if self.isVisible():
+            theme.set_blur(self)
+
+    # ---- frosted surface -----------------------------------------------
+    def paintEvent(self, e):
+        theme.paint_surface(self, self.frosted)
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        theme.set_blur(self)
+        self.frost_timer.start()  # KWin only reports blur support once we're mapped
+
+    def _frost_check(self):
+        frosted = theme.blur_possible()
+        if frosted != self.frosted:
+            self.frosted = frosted
+            self.update()
+
+    def mousePressEvent(self, e):
+        # No title bar: drag empty space (the header) to move the window.
+        if e.button() == Qt.MouseButton.LeftButton and self.windowHandle():
+            self.windowHandle().startSystemMove()
 
     # ---- clipboard -----------------------------------------------------
     def _set_clipboard(self, mime):
@@ -277,7 +397,7 @@ class MainWindow(QWidget):
         if self.cfg["copy_mode"] == "link":
             self.copy_link(gif)
             return
-        self.flash("Downloading…")
+        self.flash("Downloading…", sticky=True)
 
         def ok(data):
             # Only the GIF on the clipboard is kept on disk; no library of downloads.
@@ -423,7 +543,7 @@ def main(argv=None):
     QLocalServer.removeServer(SOCKET)  # stale socket from a crash
     server = QLocalServer()
     server.listen(SOCKET)
-    app.setStyleSheet(STYLE)
+    apply_theme(app)
     win = MainWindow(Config())
 
     def on_conn():
