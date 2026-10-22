@@ -20,6 +20,7 @@ WANT_H=600
 export XDG_CONFIG_HOME="$TMP/config" XDG_CACHE_HOME="$TMP/cache" XDG_DATA_HOME="$TMP/data"
 mkdir -p "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
 export QT_SCALE_FACTOR=1 QT_FONT_DPI=96
+export GIFPOP_DEBUG=1  # IPC trace into gifpop.log / gifpop-cli.log, shown on failure
 unset QT_QPA_PLATFORMTHEME QT_STYLE_OVERRIDE QT_AUTO_SCREEN_SCALE_FACTOR QT_SCREEN_SCALE_FACTORS
 
 log() { printf '[%s] %s\n' "$(date +%T)" "$*"; }
@@ -38,7 +39,7 @@ dump() {
     echo "----- layout tree -----"
     wm_tree 2>&1 | jq . 2>/dev/null || wm_tree 2>&1 || true
     local f
-    for f in "$TMP/gifpop.log" "$TMP/filler.log" "$(wm_log)"; do
+    for f in "$TMP/gifpop.log" "$TMP/gifpop-cli.log" "$TMP/filler.log" "$(wm_log)"; do
         [ -s "$f" ] || continue
         echo "----- $(basename "$f") (last 60 lines) -----"
         tail -n 60 "$f"

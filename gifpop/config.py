@@ -46,6 +46,7 @@ DEFAULTS = {
     "provider": "klipy",          # klipy | giphy
     "klipy_key": "",
     "giphy_key": "",
+    "imgflip_key": "",            # optional API Premium key: template search covers all of imgflip
     "content_filter": "medium",   # klipy: off/low/medium/high; mapped to a giphy rating
     "copy_quality": "md",         # size bucket used for the copied file: hd/md/sm
     "copy_mode": "file",          # file = paste as a GIF attachment, link = paste the URL

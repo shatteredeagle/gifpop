@@ -30,6 +30,7 @@ def _memegen(data):
 
 # Blank-template catalogs, both free with no key: name -> (URL, parse(json) -> templates).
 # imgflip's free list is its top 100; memegen.link serves its whole catalog (~200).
+IMGFLIP_SEARCH = "https://api.imgflip.com/search_memes"  # API Premium only
 SOURCES = {"imgflip": ("https://api.imgflip.com/get_memes", _imgflip),
            "memegen": ("https://api.memegen.link/templates/", _memegen)}
 THUMB = QSize(140, 120)
@@ -186,6 +187,9 @@ class TemplatePage(QWidget):
         self.catalogs = {}     # source name -> templates, once loaded
         self.load_errors = {}  # source name -> message
         self.loading = 0
+        self.found = []           # extra templates from imgflip searches this session
+        self.searched = set()     # queries already sent: each search can cost money
+        self.bad_key = None       # key imgflip refused; don't retry until it changes
         self.tiles = []
         self.shown = []  # tiles matching the filter, in grid order
         self.cols = 3
@@ -214,6 +218,10 @@ class TemplatePage(QWidget):
         self.filter_timer = QTimer(self, singleShot=True, interval=120)
         self.filter_timer.timeout.connect(self._apply_filter)
         self.filter.textChanged.connect(lambda _: self.filter_timer.start())
+        # With an imgflip Premium key, a pause also searches all of imgflip (metered, so slower).
+        self.search_timer = QTimer(self, singleShot=True, interval=700)
+        self.search_timer.timeout.connect(self._search_imgflip)
+        self.filter.textChanged.connect(lambda _: self.search_timer.start())
         self.filter.returnPressed.connect(self._enter)
         own = themed(QToolButton(objectName="iconBtn"), "document-open", "Open…")
         own.setToolTip(f"Open any image. Files in {TEMPLATES_DIR} show up here too.")
@@ -311,7 +319,7 @@ class TemplatePage(QWidget):
         local = [{"name": p.stem.replace("_", " "), "path": str(p), "box_count": 2}
                  for p in sorted(TEMPLATES_DIR.iterdir()) if p.suffix.lower() in IMAGE_EXT]
         self.templates, seen = [], set()
-        for t in local + [t for name in SOURCES for t in self.catalogs.get(name, [])]:
+        for t in local + [t for name in SOURCES for t in self.catalogs.get(name, [])] + self.found:
             if t["name"].lower() not in seen:  # both catalogs carry the classics; first one wins
                 seen.add(t["name"].lower())
                 self.templates.append(t)
@@ -321,6 +329,51 @@ class TemplatePage(QWidget):
                                           for n, m in self.load_errors.items()))
         if not self.mine.isChecked():
             self._populate()
+
+    def _search_imgflip(self):
+        key = self.cfg["imgflip_key"]
+        q = self.filter.text().strip().lower()
+        if (not key or key == self.bad_key or len(q) < 3 or q in self.searched
+                or self.mine.isChecked()):
+            return
+        self.searched.add(q)
+        self.status.setText("Searching imgflip…")
+        self.net.post_form(IMGFLIP_SEARCH, {"query": q}, lambda raw: self._found(key, q, raw),
+                           lambda msg: self._search_failed(key, q, msg),
+                           headers={"Authorization": f"Bearer {key}"})
+
+    def _found(self, key, q, raw):
+        try:
+            reply = json.loads(raw)
+            if not reply.get("success"):
+                self._search_failed(key, q, reply.get("error_message") or "no reason given")
+                return
+            memes = _imgflip(reply)
+        except (ValueError, KeyError, TypeError, AttributeError) as e:
+            self._search_failed(key, q, f"unexpected reply ({e})")
+            return
+        have = {t["name"].lower() for t in self.templates}
+        new = [m for m in memes if m["name"].lower() not in have]
+        for m in new:
+            m["keywords"] = [q]  # imgflip also matches alternate names: keep them under this filter
+        if not self.undo:
+            self.status.setText(f"imgflip found {len(new)} more" if new else "")
+        if new:
+            self.found += new
+            self.templates += new
+            if not self.mine.isChecked():
+                for tpl in new:
+                    self.tiles.append(self._tile(tpl))
+                self._apply_filter()
+
+    def _search_failed(self, key, q, msg):
+        # Bad or non-Premium key: say so once, then stay quiet until the key changes.
+        if any(s in msg.lower() for s in ("401", "403", "premium", "key", "auth")):
+            self.bad_key = key
+        else:
+            self.searched.discard(q)  # network trouble: let the same query try again
+        if not self.undo:
+            self.status.setText(f"imgflip search: {msg}")
 
     def saved_memes(self):
         try:
@@ -368,13 +421,16 @@ class TemplatePage(QWidget):
             self.empty_btn.setText("Browse templates" if on else "Turn on in Settings")
         self.body.setCurrentWidget(self.empty if mine and not items else self.scroll)
         for tpl in items:
-            t = TemplateTile(tpl, self.net)
-            t.hide()
-            t.clicked.connect(self._pick)
-            t.menu.connect(self._menu)
-            t.action.connect(self._action)
-            self.tiles.append(t)
+            self.tiles.append(self._tile(tpl))
         self._apply_filter()
+
+    def _tile(self, tpl):
+        t = TemplateTile(tpl, self.net)
+        t.hide()
+        t.clicked.connect(self._pick)
+        t.menu.connect(self._menu)
+        t.action.connect(self._action)
+        return t
 
     def _apply_filter(self):
         f = self.filter.text().strip().lower()

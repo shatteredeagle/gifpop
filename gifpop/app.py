@@ -91,6 +91,15 @@ class SettingsDialog(QDialog):
             '<a href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>',
             objectName="hint", wordWrap=True, openExternalLinks=True)
 
+        self.imgflip = QLineEdit(cfg["imgflip_key"], echoMode=QLineEdit.EchoMode.Password,
+                                 placeholderText="Optional")
+        imgflip_hint = QLabel(
+            "With an imgflip <b>API Premium</b> key, template search also searches all of "
+            "imgflip, not just its top 100. Free imgflip keys don't add templates. Premium "
+            "includes 200 searches a month; imgflip bills you for more. "
+            '<a href="https://imgflip.com/api">imgflip.com/api</a>',
+            objectName="hint", wordWrap=True, openExternalLinks=True)
+
         self.save_memes = QCheckBox("Keep a copy of every meme I make")
         self.save_memes.setChecked(cfg["save_memes"])
         self.memes_dir = QLineEdit(cfg["memes_dir"], placeholderText=str(DEFAULT_MEMES_DIR))
@@ -139,6 +148,8 @@ class SettingsDialog(QDialog):
         section("Memes")
         form.addRow(self.save_memes)
         form.addRow("Folder", folder)
+        form.addRow("imgflip key", self.imgflip)
+        form.addRow(imgflip_hint)
         section("General")
         form.addRow(self.auto_hide)
         form.addRow("Emoji button runs", self.emoji)
@@ -201,6 +212,7 @@ class SettingsDialog(QDialog):
         c["provider"] = self.provider.currentData()
         c["klipy_key"] = self.klipy.text().strip() if own else ""
         c["giphy_key"] = self.giphy.text().strip()
+        c["imgflip_key"] = self.imgflip.text().strip()
         c["content_filter"] = self.filter.currentData()
         c["copy_quality"] = self.quality.currentData()
         c["copy_mode"] = self.mode.currentData()
@@ -221,6 +233,7 @@ class MainWindow(QWidget):
         self.cfg = cfg
         self.net = Net(self)
         self.updater = Updater(self.net, cfg, self)
+        self.quitting = False
         self.recents = Recents()
         self.setWindowTitle("GifPop")
         self.setWindowIcon(app_icon())
@@ -375,8 +388,18 @@ class MainWindow(QWidget):
             self.hide()
 
     def closeEvent(self, e):
-        e.ignore()
+        debug("closeEvent", "quitting" if self.quitting else "hide instead")
+        if self.quitting:
+            super().closeEvent(e)
+            return
+        e.ignore()  # closing just tucks it back into the tray
         self.hide()
+
+    def quit_app(self):
+        # Qt 6's quit() first closes the windows and gives up if one refuses, which
+        # closeEvent above does: without the flag, Quit did nothing while the window was open.
+        self.quitting = True
+        QApplication.quit()
 
     def flash(self, msg, hide=False, sticky=False):
         self.toast.setText(msg)
@@ -573,7 +596,7 @@ def make_tray(win):
                              app_icon())
     u.found.connect(found)
     tray.messageClicked.connect(lambda: (win.summon(""), win.open_settings()))
-    menu.addAction("Quit", QApplication.quit)
+    menu.addAction("Quit", win.quit_app)
     tray.setContextMenu(menu)
     tray.activated.connect(
         lambda r: win.summon("toggle") if r == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -582,14 +605,24 @@ def make_tray(win):
     return tray
 
 
+def debug(*args):
+    if os.environ.get("GIFPOP_DEBUG"):
+        print("gifpop:", *args, file=sys.stderr, flush=True)
+
+
 def send_to_running(msg):
     sock = QLocalSocket()
     sock.connectToServer(SOCKET)
     if not sock.waitForConnected(300):
         return False
-    sock.write(msg.encode())
+    sock.write(f"{msg}\n".encode())
     sock.flush()
     sock.waitForBytesWritten(300)
+    # Wait for the running copy's "ok" so the message can't die with this short-lived
+    # process (`--quit` sometimes did nothing). Copies older than 0.1.3 never answer;
+    # they still get the message, so carry on either way.
+    acked = sock.waitForReadyRead(2000) and bytes(sock.readAll()).startswith(b"ok")
+    debug("sent", repr(msg), "acked" if acked else "no ack")
     sock.disconnectFromServer()
     return True
 
@@ -617,30 +650,39 @@ def main(argv=None):
         s = server.nextPendingConnection()
         buf = bytearray()
 
-        # The sender writes one message and disconnects. Act on disconnect, after the
-        # last read: handling readyRead alone loses the message when the disconnect is
-        # processed first (seen as `--quit` sometimes doing nothing).
-        def done():
+        # One message per connection, newline-terminated (older clients just disconnect).
+        # Act once the line is complete or the sender is gone, whichever we see first,
+        # and answer "ok" so the sender knows it arrived before it exits.
+        def handle():
             if getattr(s, "_handled", False):
                 return
-            s._handled = True
             buf.extend(bytes(s.readAll()))
+            connected = s.state() == s.LocalSocketState.ConnectedState
+            if b"\n" not in buf and connected:
+                return
+            s._handled = True
+            if connected:
+                s.write(b"ok\n")
+                s.flush()
+            s.disconnectFromServer()
             s.deleteLater()
             parts = buf.decode(errors="replace").split()
+            debug("received", parts)
             if not parts:
                 return
             if parts[0] == "quit":
-                app.quit()
+                win.quit_app()
             elif parts[0] != "noop":
                 win.summon(parts[0], parts[1] if len(parts) > 1 else "")
-        s.readyRead.connect(lambda: buf.extend(bytes(s.readAll())))
-        s.disconnected.connect(done)
-        if s.state() != s.LocalSocketState.ConnectedState:  # gone before we connected
-            done()
+        s.readyRead.connect(handle)
+        s.disconnected.connect(handle)
+        handle()  # it may all be here already
     server.newConnection.connect(on_conn)
 
     win._tray = make_tray(win) if QSystemTrayIcon.isSystemTrayAvailable() else None
     win.updater.start()
     if "--background" not in argv:
         win.summon(page if page != "toggle" else "gif", token)
-    return app.exec()
+    rc = app.exec()
+    debug("event loop ended")
+    return rc
