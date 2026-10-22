@@ -28,6 +28,7 @@ from .gifs import GifPage
 from .keys import BUILTIN_KLIPY
 from .memes import MemeEditor, TemplatePage
 from .net import Net
+from .update import Updater, can_self_update
 
 SOCKET = f"gifpop-{os.getuid()}"
 GIF_SIZE = (480, 600)
@@ -107,6 +108,22 @@ class SettingsDialog(QDialog):
         self.auto_hide.setChecked(cfg["auto_hide"])
         self.emoji = QLineEdit(cfg["emoji_command"])
 
+        self.updater = getattr(parent, "updater", None)
+        self.check_updates = QCheckBox("Check for updates automatically")
+        self.check_updates.setChecked(cfg["check_updates"])
+        self.update_status = QLabel(objectName="hint", wordWrap=True, openExternalLinks=True)
+        self.check_now = QPushButton("Check now")
+        self.update_btn = QPushButton()
+        updates = QHBoxLayout()
+        updates.addWidget(self.update_status, 1)
+        updates.addWidget(self.check_now)
+        updates.addWidget(self.update_btn)
+        if self.updater:
+            self.check_now.clicked.connect(lambda: self.updater.check(manual=True))
+            self.update_btn.clicked.connect(self.updater.update)
+            self.updater.changed.connect(self._update_state)
+        self._update_state()
+
         form = QFormLayout(self)
         form.setVerticalSpacing(8)
         section = lambda t: form.addRow(QLabel(t, objectName="sectionTitle"))  # noqa: E731
@@ -125,6 +142,9 @@ class SettingsDialog(QDialog):
         section("General")
         form.addRow(self.auto_hide)
         form.addRow("Emoji button runs", self.emoji)
+        section("Updates")
+        form.addRow(self.check_updates)
+        form.addRow(updates)
 
         about = QLabel(f"GifPop {__version__} · GPL-3.0 · independent, not affiliated with "
                        "KLIPY or GIPHY", objectName="caption", wordWrap=True)
@@ -146,6 +166,29 @@ class SettingsDialog(QDialog):
         sync()
         self.setMinimumWidth(480)
 
+    def _update_state(self):
+        u = self.updater
+        if not u:
+            self.update_status.setText("")
+            self.check_now.hide()
+            self.update_btn.hide()
+            return
+        latest = u.latest
+        text = u.message or "Not checked yet."
+        if latest and not can_self_update():
+            text += f' <a href="{latest["url"]}">Download page</a>'
+        self.update_status.setText(text)
+        self.check_now.setEnabled(u.state == "idle")
+        self.update_btn.setVisible(bool(latest) and can_self_update())
+        self.update_btn.setEnabled(u.state == "idle")
+        if latest:
+            self.update_btn.setText(f"Update to {latest['version']}")
+
+    def done(self, r):
+        if self.updater:
+            self.updater.changed.disconnect(self._update_state)
+        super().done(r)
+
     def _browse(self):
         d = QFileDialog.getExistingDirectory(self, "My memes folder",
                                              self.memes_dir.text() or str(DEFAULT_MEMES_DIR))
@@ -165,7 +208,10 @@ class SettingsDialog(QDialog):
         c["emoji_command"] = self.emoji.text().strip()
         c["save_memes"] = self.save_memes.isChecked()
         c["memes_dir"] = self.memes_dir.text().strip()
+        c["check_updates"] = self.check_updates.isChecked()
         c.save()
+        if self.updater:
+            self.updater.set_auto(c["check_updates"])
         super().accept()
 
 
@@ -174,6 +220,7 @@ class MainWindow(QWidget):
         super().__init__()
         self.cfg = cfg
         self.net = Net(self)
+        self.updater = Updater(self.net, cfg, self)
         self.recents = Recents()
         self.setWindowTitle("GifPop")
         self.setWindowIcon(app_icon())
@@ -508,6 +555,24 @@ def make_tray(win):
     menu.addAction("Make a meme", lambda: win.summon("meme"))
     menu.addAction("Settings", lambda: (win.summon(""), win.open_settings()))
     menu.addSeparator()
+    upd = menu.addAction("", lambda: (win.summon(""), win.open_settings()))
+    upd.setVisible(False)
+    u = win.updater
+
+    def refresh():
+        upd.setVisible(bool(u.latest))
+        if u.latest:
+            upd.setText(f"Update to {u.latest['version']}…")
+    u.changed.connect(refresh)
+
+    def found(version):
+        if win.cfg["update_notified"] != version:  # one tray message per release
+            win.cfg["update_notified"] = version
+            win.cfg.save()
+            tray.showMessage("GifPop update", f"GifPop {version} is out. Click to update.",
+                             app_icon())
+    u.found.connect(found)
+    tray.messageClicked.connect(lambda: (win.summon(""), win.open_settings()))
     menu.addAction("Quit", QApplication.quit)
     tray.setContextMenu(menu)
     tray.activated.connect(
@@ -575,6 +640,7 @@ def main(argv=None):
     server.newConnection.connect(on_conn)
 
     win._tray = make_tray(win) if QSystemTrayIcon.isSystemTrayAvailable() else None
+    win.updater.start()
     if "--background" not in argv:
         win.summon(page if page != "toggle" else "gif", token)
     return app.exec()

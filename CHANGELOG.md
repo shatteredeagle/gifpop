@@ -5,6 +5,7 @@ All notable changes to GifPop. Each release's notes on GitHub come from its sect
 ## [0.1.2] - 2026-10-22
 
 ### New
+- **GifPop tells you when there's an update, and installs it for you.** It checks GitHub once a day; when a new version is out you get a tray message and an *Update to …* item in the tray menu. One click downloads it, checks it, installs it and restarts GifPop, keeping your settings and Win + . shortcut. Settings > Updates has *Check now* and a switch to turn the daily check off.
 - **About 200 more meme templates.** The template list now also includes the full [memegen.link](https://memegen.link) catalog, alongside imgflip's top 100. Search matches template names and memegen's keywords, so things like "galaxy" find Galaxy Brain. Templates both sites have only show once.
 
 ### Fixed
