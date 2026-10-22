@@ -233,6 +233,7 @@ class MainWindow(QWidget):
         self.cfg = cfg
         self.net = Net(self)
         self.updater = Updater(self.net, cfg, self)
+        self.quitting = False
         self.recents = Recents()
         self.setWindowTitle("GifPop")
         self.setWindowIcon(app_icon())
@@ -387,8 +388,18 @@ class MainWindow(QWidget):
             self.hide()
 
     def closeEvent(self, e):
-        e.ignore()
+        debug("closeEvent", "quitting" if self.quitting else "hide instead")
+        if self.quitting:
+            super().closeEvent(e)
+            return
+        e.ignore()  # closing just tucks it back into the tray
         self.hide()
+
+    def quit_app(self):
+        # Qt 6's quit() first closes the windows and gives up if one refuses, which
+        # closeEvent above does: without the flag, Quit did nothing while the window was open.
+        self.quitting = True
+        QApplication.quit()
 
     def flash(self, msg, hide=False, sticky=False):
         self.toast.setText(msg)
@@ -585,7 +596,7 @@ def make_tray(win):
                              app_icon())
     u.found.connect(found)
     tray.messageClicked.connect(lambda: (win.summon(""), win.open_settings()))
-    menu.addAction("Quit", QApplication.quit)
+    menu.addAction("Quit", win.quit_app)
     tray.setContextMenu(menu)
     tray.activated.connect(
         lambda r: win.summon("toggle") if r == QSystemTrayIcon.ActivationReason.Trigger else None)
@@ -660,7 +671,7 @@ def main(argv=None):
             if not parts:
                 return
             if parts[0] == "quit":
-                app.quit()
+                win.quit_app()
             elif parts[0] != "noop":
                 win.summon(parts[0], parts[1] if len(parts) > 1 else "")
         s.readyRead.connect(handle)
