@@ -10,7 +10,9 @@ Built for KDE Plasma on Wayland. It works on other desktops; there you set the h
 curl -fsSL https://github.com/shatteredeagle/gifpop/releases/latest/download/get.sh | bash
 ```
 
-That downloads the latest release, checks its checksum and installs it for your user (no root, nothing else to install). On Plasma it asks whether Win + . should open GifPop. Run the same line again to update.
+That downloads the latest release, checks its checksum and installs it for your user (no root, nothing else to install). On Plasma it asks whether Win + . should open GifPop.
+
+**Updates:** GifPop checks GitHub for a new release once a day and tells you in the tray. Click it (or Settings > Updates) to update in place; your settings and Win + . stay as they are. Turn the check off in Settings if you'd rather not; running the install line again also updates.
 
 Prefer doing it by hand? Download `gifpop-<version>.tar.gz` from [Releases](https://github.com/shatteredeagle/gifpop/releases), extract it and run `./install.sh`.
 
@@ -93,4 +95,4 @@ Releases are built by GitHub Actions: push a tag `vX.Y.Z` that matches `gifpop/_
 
 ## Credits and license
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). Meme font: Anton (SIL Open Font License, `gifpop/assets/OFL.txt`). Meme templates: imgflip. GIFs: KLIPY or GIPHY.
+GPL-3.0-or-later, see [LICENSE](LICENSE). Meme font: Anton (SIL Open Font License, `gifpop/assets/OFL.txt`). Meme templates: imgflip and [memegen.link](https://memegen.link). GIFs: KLIPY or GIPHY.

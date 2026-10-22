@@ -54,6 +54,9 @@ DEFAULTS = {
     "customer_id": "",
     "save_memes": True,           # keep a copy of every meme you make
     "memes_dir": "",              # empty = ~/Pictures/GifPop
+    "check_updates": True,        # ask GitHub for the latest release, daily
+    "last_update_check": 0,
+    "update_notified": "",        # last version we popped a tray message for
 }
 
 
