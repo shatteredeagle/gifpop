@@ -1,4 +1,4 @@
-"""Meme maker: blank-template browser (imgflip + your own folder) and a text editor."""
+"""Meme maker: blank-template browser (imgflip + memegen.link + your own folder) and a text editor."""
 import json
 import shutil
 import tempfile
@@ -16,10 +16,25 @@ from PyQt6.QtWidgets import (QBoxLayout, QButtonGroup, QCheckBox, QColorDialog, 
 
 from .config import CACHE_DIR, TEMPLATES_DIR
 
-IMGFLIP = "https://api.imgflip.com/get_memes"
-TEMPLATE_CACHE = CACHE_DIR / "imgflip.json"
+
+
+def _imgflip(data):
+    return [{"name": m["name"], "url": m["url"], "box_count": m.get("box_count", 2)}
+            for m in data["data"]["memes"]]
+
+
+def _memegen(data):
+    return [{"name": m["name"], "url": m["blank"], "thumb": f"{m['blank']}?width=280",
+             "box_count": m.get("lines", 2), "keywords": m.get("keywords") or []} for m in data]
+
+
+# Blank-template catalogs, both free with no key: name -> (URL, parse(json) -> templates).
+# imgflip's free list is its top 100; memegen.link serves its whole catalog (~200).
+SOURCES = {"imgflip": ("https://api.imgflip.com/get_memes", _imgflip),
+           "memegen": ("https://api.memegen.link/templates/", _memegen)}
 THUMB = QSize(140, 120)
 SPACING = 6
+ATTRIB = "Templates from imgflip and memegen.link"
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
 TRASH = Path(tempfile.gettempdir()) / "gifpop-trash"
 SWATCHES = ["white", "black", "#ffd400", "#e53935"]
@@ -91,6 +106,7 @@ class TemplateTile(QWidget):
         self.net = net
         self.reply = None
         self.loaded = False
+        self.haystack = " ".join([tpl["name"], *tpl.get("keywords", [])]).lower()  # what the filter matches
 
     def showEvent(self, e):
         # Load on first show, so filtering down to a few tiles only fetches those.
@@ -99,7 +115,8 @@ class TemplateTile(QWidget):
             if self.tpl.get("path"):
                 self._show(QPixmap(self.tpl["path"]))
             else:
-                self.reply = self.net.get(self.tpl["url"], self._loaded, self._failed)
+                self.reply = self.net.get(self.tpl.get("thumb", self.tpl["url"]),
+                                          self._loaded, self._failed)
         super().showEvent(e)
 
     def _loaded(self, data):
@@ -166,6 +183,9 @@ class TemplatePage(QWidget):
         self.net = net
         self.cfg = cfg
         self.templates = []
+        self.catalogs = {}     # source name -> templates, once loaded
+        self.load_errors = {}  # source name -> message
+        self.loading = 0
         self.tiles = []
         self.shown = []  # tiles matching the filter, in grid order
         self.cols = 3
@@ -234,7 +254,7 @@ class TemplatePage(QWidget):
 
         self.status = QLabel(objectName="status")
         self.status.linkActivated.connect(self._undo_delete)
-        attrib = self.attrib = QLabel("Templates from imgflip", objectName="attrib")
+        attrib = self.attrib = QLabel(ATTRIB, objectName="attrib")
         bottom = QHBoxLayout()
         bottom.addWidget(self.status, 1)
         bottom.addWidget(attrib)
@@ -246,40 +266,61 @@ class TemplatePage(QWidget):
         lay.addLayout(bottom)
 
     def ensure_loaded(self):
-        if self.templates:
+        if self.catalogs or self.loading:
             return
+        for name in SOURCES:
+            self._load(name)
+
+    def _load(self, name):
+        url, parse = SOURCES[name]
+        cache = CACHE_DIR / f"{name}.json"
         try:
-            if time.time() - TEMPLATE_CACHE.stat().st_mtime < 86400:
-                self._set(json.loads(TEMPLATE_CACHE.read_text()))
+            if time.time() - cache.stat().st_mtime < 86400:
+                self.catalogs[name] = parse(json.loads(cache.read_text()))
+                self._set()
                 return
-        except (OSError, ValueError):
+        except (OSError, ValueError, KeyError, TypeError):
             pass
+        self.loading += 1
         self.status.setText("Loading templates…")
-        self.net.get(IMGFLIP, self._got, self._err, prefer_cache=False)
+        self.net.get(url, lambda raw: self._got(name, raw), lambda msg: self._err(name, msg),
+                     prefer_cache=False)
 
-    def _got(self, raw):
+    def _got(self, name, raw):
+        self.loading -= 1
         try:
-            memes = json.loads(raw)["data"]["memes"]
-        except (ValueError, KeyError) as e:
-            self._err(str(e))
+            self.catalogs[name] = SOURCES[name][1](json.loads(raw))
+        except (ValueError, KeyError, TypeError) as e:
+            self._err(name, str(e), counted=True)
             return
-        TEMPLATE_CACHE.write_text(json.dumps(memes))
-        self._set(memes)
+        (CACHE_DIR / f"{name}.json").write_bytes(raw)
+        self.load_errors.pop(name, None)
+        self._set()
 
-    def _err(self, msg):
-        self.status.setText(f"Couldn't load templates: {msg}")
-        try:
-            self._set(json.loads(TEMPLATE_CACHE.read_text()))  # stale beats nothing
-        except (OSError, ValueError):
-            self._set([])
+    def _err(self, name, msg, counted=False):
+        if not counted:
+            self.loading -= 1
+        self.load_errors[name] = msg
+        try:  # stale beats nothing
+            self.catalogs[name] = SOURCES[name][1](json.loads((CACHE_DIR / f"{name}.json").read_text()))
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        self._set()
 
-    def _set(self, memes):
+    def _set(self):
         local = [{"name": p.stem.replace("_", " "), "path": str(p), "box_count": 2}
                  for p in sorted(TEMPLATES_DIR.iterdir()) if p.suffix.lower() in IMAGE_EXT]
-        self.templates = local + memes
+        self.templates, seen = [], set()
+        for t in local + [t for name in SOURCES for t in self.catalogs.get(name, [])]:
+            if t["name"].lower() not in seen:  # both catalogs carry the classics; first one wins
+                seen.add(t["name"].lower())
+                self.templates.append(t)
         if not self.undo:
-            self.status.setText("")
-        self._populate()
+            self.status.setText("Loading templates…" if self.loading else
+                                "; ".join(f"Couldn't load {n} templates: {m}"
+                                          for n, m in self.load_errors.items()))
+        if not self.mine.isChecked():
+            self._populate()
 
     def saved_memes(self):
         try:
@@ -295,7 +336,7 @@ class TemplatePage(QWidget):
         self.filter.setText(self.filters[on])
         self.filter.blockSignals(False)
         self.filter.setPlaceholderText("Filter my memes" if on else "Filter templates")
-        self.attrib.setText("My memes" if on else "Templates from imgflip")
+        self.attrib.setText("My memes" if on else ATTRIB)
         self.attrib.setToolTip(str(self.cfg.memes_dir) if on else "")
         self._populate()
 
@@ -339,7 +380,7 @@ class TemplatePage(QWidget):
         f = self.filter.text().strip().lower()
         for t in self.shown:
             self.grid.removeWidget(t)
-        self.shown = [t for t in self.tiles if not f or f in t.tpl["name"].lower()]
+        self.shown = [t for t in self.tiles if not f or f in t.haystack]
         keep = set(map(id, self.shown))
         for t in self.tiles:
             if id(t) not in keep:

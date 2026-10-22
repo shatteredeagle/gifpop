@@ -2,7 +2,10 @@
 
 All notable changes to GifPop. Each release's notes on GitHub come from its section here.
 
-## [Unreleased]
+## [0.1.2] - 2026-10-22
+
+### New
+- **About 200 more meme templates.** The template list now also includes the full [memegen.link](https://memegen.link) catalog, alongside imgflip's top 100. Search matches template names and memegen's keywords, so things like "galaxy" find Galaxy Brain. Templates both sites have only show once.
 
 ### Fixed
 - **Filtering meme templates froze the window and lost the pictures.** Every letter you typed rebuilt the whole template grid and reloaded every thumbnail, so typing stalled and tiles showed their names with no image. Filtering now just shows and hides the tiles that are already there, so it's instant and the pictures stay.

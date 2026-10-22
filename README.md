@@ -93,4 +93,4 @@ Releases are built by GitHub Actions: push a tag `vX.Y.Z` that matches `gifpop/_
 
 ## Credits and license
 
-GPL-3.0-or-later, see [LICENSE](LICENSE). Meme font: Anton (SIL Open Font License, `gifpop/assets/OFL.txt`). Meme templates: imgflip. GIFs: KLIPY or GIPHY.
+GPL-3.0-or-later, see [LICENSE](LICENSE). Meme font: Anton (SIL Open Font License, `gifpop/assets/OFL.txt`). Meme templates: imgflip and [memegen.link](https://memegen.link). GIFs: KLIPY or GIPHY.
