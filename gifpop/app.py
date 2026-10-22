@@ -594,14 +594,24 @@ def make_tray(win):
     return tray
 
 
+def debug(*args):
+    if os.environ.get("GIFPOP_DEBUG"):
+        print("gifpop:", *args, file=sys.stderr, flush=True)
+
+
 def send_to_running(msg):
     sock = QLocalSocket()
     sock.connectToServer(SOCKET)
     if not sock.waitForConnected(300):
         return False
-    sock.write(msg.encode())
+    sock.write(f"{msg}\n".encode())
     sock.flush()
     sock.waitForBytesWritten(300)
+    # Wait for the running copy's "ok" so the message can't die with this short-lived
+    # process (`--quit` sometimes did nothing). Copies older than 0.1.3 never answer;
+    # they still get the message, so carry on either way.
+    acked = sock.waitForReadyRead(2000) and bytes(sock.readAll()).startswith(b"ok")
+    debug("sent", repr(msg), "acked" if acked else "no ack")
     sock.disconnectFromServer()
     return True
 
@@ -629,30 +639,39 @@ def main(argv=None):
         s = server.nextPendingConnection()
         buf = bytearray()
 
-        # The sender writes one message and disconnects. Act on disconnect, after the
-        # last read: handling readyRead alone loses the message when the disconnect is
-        # processed first (seen as `--quit` sometimes doing nothing).
-        def done():
+        # One message per connection, newline-terminated (older clients just disconnect).
+        # Act once the line is complete or the sender is gone, whichever we see first,
+        # and answer "ok" so the sender knows it arrived before it exits.
+        def handle():
             if getattr(s, "_handled", False):
                 return
-            s._handled = True
             buf.extend(bytes(s.readAll()))
+            connected = s.state() == s.LocalSocketState.ConnectedState
+            if b"\n" not in buf and connected:
+                return
+            s._handled = True
+            if connected:
+                s.write(b"ok\n")
+                s.flush()
+            s.disconnectFromServer()
             s.deleteLater()
             parts = buf.decode(errors="replace").split()
+            debug("received", parts)
             if not parts:
                 return
             if parts[0] == "quit":
                 app.quit()
             elif parts[0] != "noop":
                 win.summon(parts[0], parts[1] if len(parts) > 1 else "")
-        s.readyRead.connect(lambda: buf.extend(bytes(s.readAll())))
-        s.disconnected.connect(done)
-        if s.state() != s.LocalSocketState.ConnectedState:  # gone before we connected
-            done()
+        s.readyRead.connect(handle)
+        s.disconnected.connect(handle)
+        handle()  # it may all be here already
     server.newConnection.connect(on_conn)
 
     win._tray = make_tray(win) if QSystemTrayIcon.isSystemTrayAvailable() else None
     win.updater.start()
     if "--background" not in argv:
         win.summon(page if page != "toggle" else "gif", token)
-    return app.exec()
+    rc = app.exec()
+    debug("event loop ended")
+    return rc
