@@ -2,7 +2,7 @@
 Full-size GIFs are never written to the cache (KLIPY's terms allow storing thumbnails only)."""
 import json
 
-from PyQt6.QtCore import QByteArray, QObject, QUrl
+from PyQt6.QtCore import QByteArray, QObject, QUrl, QUrlQuery
 from PyQt6.QtNetwork import (QNetworkAccessManager, QNetworkDiskCache,
                              QNetworkReply, QNetworkRequest)
 
@@ -29,8 +29,23 @@ class Net(QObject):
                              QNetworkRequest.CacheLoadControl.PreferCache)
         if not store:
             req.setAttribute(QNetworkRequest.Attribute.CacheSaveControlAttribute, False)
-        reply = self.nam.get(req)
+        return self._watch(self.nam.get(req), on_ok, on_err)
 
+    def post_form(self, url, fields, on_ok, on_err=None, headers=None):
+        """POST url-encoded fields (never cached); same callbacks as get()."""
+        req = QNetworkRequest(QUrl(url))
+        req.setHeader(QNetworkRequest.KnownHeaders.UserAgentHeader, USER_AGENT)
+        req.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader,
+                      "application/x-www-form-urlencoded")
+        for k, v in (headers or {}).items():
+            req.setRawHeader(k.encode(), v.encode())
+        q = QUrlQuery()
+        for k, v in fields.items():
+            q.addQueryItem(k, str(v))
+        body = q.query(QUrl.ComponentFormattingOption.FullyEncoded).encode()
+        return self._watch(self.nam.post(req, QByteArray(body)), on_ok, on_err)
+
+    def _watch(self, reply, on_ok, on_err):
         def done():
             try:
                 if reply.error() == QNetworkReply.NetworkError.NoError:

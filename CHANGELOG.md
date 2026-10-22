@@ -2,6 +2,11 @@
 
 All notable changes to GifPop. Each release's notes on GitHub come from its section here.
 
+## [Unreleased]
+
+### New
+- **Bring your own imgflip key for every template imgflip has.** Settings > Memes has an optional imgflip API key. With an imgflip **API Premium** key, pausing in the template search also searches imgflip's whole database (alternate names too) and adds what it finds to the grid. Each search is sent once per session, since imgflip includes 200 a month and bills for more. Free imgflip keys don't unlock search, and a key imgflip rejects is reported once and then left alone until you change it.
+
 ## [0.1.2] - 2026-10-22
 
 ### New

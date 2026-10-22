@@ -91,6 +91,15 @@ class SettingsDialog(QDialog):
             '<a href="https://developers.giphy.com/dashboard/">developers.giphy.com</a>',
             objectName="hint", wordWrap=True, openExternalLinks=True)
 
+        self.imgflip = QLineEdit(cfg["imgflip_key"], echoMode=QLineEdit.EchoMode.Password,
+                                 placeholderText="Optional")
+        imgflip_hint = QLabel(
+            "With an imgflip <b>API Premium</b> key, template search also searches all of "
+            "imgflip, not just its top 100. Free imgflip keys don't add templates. Premium "
+            "includes 200 searches a month; imgflip bills you for more. "
+            '<a href="https://imgflip.com/api">imgflip.com/api</a>',
+            objectName="hint", wordWrap=True, openExternalLinks=True)
+
         self.save_memes = QCheckBox("Keep a copy of every meme I make")
         self.save_memes.setChecked(cfg["save_memes"])
         self.memes_dir = QLineEdit(cfg["memes_dir"], placeholderText=str(DEFAULT_MEMES_DIR))
@@ -139,6 +148,8 @@ class SettingsDialog(QDialog):
         section("Memes")
         form.addRow(self.save_memes)
         form.addRow("Folder", folder)
+        form.addRow("imgflip key", self.imgflip)
+        form.addRow(imgflip_hint)
         section("General")
         form.addRow(self.auto_hide)
         form.addRow("Emoji button runs", self.emoji)
@@ -201,6 +212,7 @@ class SettingsDialog(QDialog):
         c["provider"] = self.provider.currentData()
         c["klipy_key"] = self.klipy.text().strip() if own else ""
         c["giphy_key"] = self.giphy.text().strip()
+        c["imgflip_key"] = self.imgflip.text().strip()
         c["content_filter"] = self.filter.currentData()
         c["copy_quality"] = self.quality.currentData()
         c["copy_mode"] = self.mode.currentData()
