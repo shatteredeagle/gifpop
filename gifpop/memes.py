@@ -88,17 +88,28 @@ class TemplateTile(QWidget):
             self.actions.adjustSize()
             self.actions.move(THUMB.width() - self.actions.width() - 2, 2)
             self.actions.hide()
-        if tpl.get("path"):
-            self._show(QPixmap(tpl["path"]))
-            self.reply = None
-        else:
-            self.reply = net.get(tpl["url"], self._loaded)
+        self.net = net
+        self.reply = None
+        self.loaded = False
+
+    def showEvent(self, e):
+        # Load on first show, so filtering down to a few tiles only fetches those.
+        if not self.loaded:
+            self.loaded = True
+            if self.tpl.get("path"):
+                self._show(QPixmap(self.tpl["path"]))
+            else:
+                self.reply = self.net.get(self.tpl["url"], self._loaded, self._failed)
+        super().showEvent(e)
 
     def _loaded(self, data):
         self.reply = None
         pm = QPixmap()
         pm.loadFromData(data)
         self._show(pm)
+
+    def _failed(self, _msg):
+        self.reply = None  # net deletes the reply; don't abort() it later
 
     def _show(self, pm):
         if not pm.isNull():
@@ -107,7 +118,11 @@ class TemplateTile(QWidget):
 
     def abort(self):
         if self.reply:
-            self.reply.abort()
+            try:
+                self.reply.abort()
+            except RuntimeError:
+                pass  # already finished and deleted
+            self.reply = None
 
     def _hover(self, on):
         self.img.setProperty("hover", on)
@@ -152,6 +167,7 @@ class TemplatePage(QWidget):
         self.cfg = cfg
         self.templates = []
         self.tiles = []
+        self.shown = []  # tiles matching the filter, in grid order
         self.cols = 3
         self.filters = {False: "", True: ""}
         self.undo = None  # (trash path, original path)
@@ -175,8 +191,10 @@ class TemplatePage(QWidget):
 
         self.filter = QLineEdit(placeholderText="Filter templates")
         self.filter.setClearButtonEnabled(True)
-        self.filter.textChanged.connect(self._populate)
-        self.filter.returnPressed.connect(lambda: self.tiles and self._pick(self.tiles[0].tpl))
+        self.filter_timer = QTimer(self, singleShot=True, interval=120)
+        self.filter_timer.timeout.connect(self._apply_filter)
+        self.filter.textChanged.connect(lambda _: self.filter_timer.start())
+        self.filter.returnPressed.connect(self._enter)
         own = themed(QToolButton(objectName="iconBtn"), "document-open", "Open…")
         own.setToolTip(f"Open any image. Files in {TEMPLATES_DIR} show up here too.")
         own.clicked.connect(self._open_file)
@@ -285,14 +303,21 @@ class TemplatePage(QWidget):
         if self.mine.isChecked():
             self._populate()
 
+    def _enter(self):
+        self._apply_filter()
+        if self.shown:
+            self._pick(self.shown[0].tpl)
+
     def _populate(self):
+        """Rebuild the tiles for the current mode. Typing only re-filters them (_apply_filter)."""
+        self.filter_timer.stop()
         for t in self.tiles:
             t.abort()
             t.hide()  # out of the layout now, not whenever deleteLater gets to it
             self.grid.removeWidget(t)
             t.deleteLater()
         self.tiles = []
-        f = self.filter.text().strip().lower()
+        self.shown = []
         mine = self.mine.isChecked()
         items = self.saved_memes() if mine else self.templates
         if mine and not items:
@@ -302,17 +327,30 @@ class TemplatePage(QWidget):
             self.empty_btn.setText("Browse templates" if on else "Turn on in Settings")
         self.body.setCurrentWidget(self.empty if mine and not items else self.scroll)
         for tpl in items:
-            if f and f not in tpl["name"].lower():
-                continue
             t = TemplateTile(tpl, self.net)
+            t.hide()
             t.clicked.connect(self._pick)
             t.menu.connect(self._menu)
             t.action.connect(self._action)
             self.tiles.append(t)
+        self._apply_filter()
+
+    def _apply_filter(self):
+        f = self.filter.text().strip().lower()
+        for t in self.shown:
+            self.grid.removeWidget(t)
+        self.shown = [t for t in self.tiles if not f or f in t.tpl["name"].lower()]
+        keep = set(map(id, self.shown))
+        for t in self.tiles:
+            if id(t) not in keep:
+                t.hide()
         self._layout_tiles()
+        for t in self.shown:
+            t.show()
+        self.scroll.verticalScrollBar().setValue(0)
 
     def _layout_tiles(self):
-        for i, t in enumerate(self.tiles):
+        for i, t in enumerate(self.shown):
             self.grid.addWidget(t, i // self.cols, i % self.cols)
     def eventFilter(self, obj, e):
         # The viewport's resize, not ours: it's the width tiles actually get (minus scrollbar).
@@ -324,7 +362,7 @@ class TemplatePage(QWidget):
         cols = max(2, (w + SPACING) // (THUMB.width() + SPACING))
         if cols != self.cols:
             self.cols = cols
-            for t in self.tiles:
+            for t in self.shown:
                 self.grid.removeWidget(t)
             self._layout_tiles()
 
